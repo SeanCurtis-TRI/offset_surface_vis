@@ -1,6 +1,6 @@
 # defines geometry for drawing in a context
 from OpenGL.GL import *
-from node import SelectableGeoNode
+from node import SelectableGeoNode, GeoNode
 from matrix import *
 from ObjReader import ObjFile
 from material import getNextMaterial
@@ -20,7 +20,7 @@ def getObjGeometry( fileName ):
     OBJS[ fileName ] = obj
     return obj
 
-def getObjNode( fileName, xform=None, parent=None ):
+def getObjNode( fileName, xform=None, parent=None, selectable=True ):
     '''Creates a scene graph node for an obj geometry file.
 
     @param:     fileName        The path to a valid obj file.
@@ -31,7 +31,8 @@ def getObjNode( fileName, xform=None, parent=None ):
     @returns:   An instance of a scenegraph Node containing the gometry.
     '''
     geom = getObjGeometry( fileName )
-    return geom.instance()
+    is_selectable = selectable
+    return geom.instance( selectable=is_selectable )
 
 class Geometry:
     '''A drawable geometry element'''
@@ -55,7 +56,7 @@ class Geometry:
         glCallList( self.GL_ID )
         glPopAttrib()
 
-    def instance( self, xform=None, parent=None ):
+    def instance( self, xform=None, parent=None, selectable=True ):
         '''Create an instance of the geometry with the (optionally)
         provided parent and transform.
 
@@ -64,7 +65,10 @@ class Geometry:
         @param:     parent      Another node that serves as the
                                 parent of this node.
         '''
-        node = SelectableGeoNode( self, xform, parent )
+        if ( selectable ):
+            node = SelectableGeoNode( self, xform, parent )
+        else:
+            node = GeoNode( self, xform, parent )
         node.setMaterial( getNextMaterial() )
         return node
 

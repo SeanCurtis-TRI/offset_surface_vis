@@ -3,7 +3,7 @@ from matrix import *
 from OpenGL.GL import *
 # TODO: Do I need MeshEdge?
 
-def getMeshNode( fileName, xform=None, parent=None ):
+def getMeshNode( fileName, xform=None, parent=None, selectable=True ):
     '''Creates a scene graph node for an obj geometry file.
 
     @param:     fileName        The path to a valid obj file.
@@ -17,7 +17,8 @@ def getMeshNode( fileName, xform=None, parent=None ):
     mesh = WatertightMesh()
     mesh.from_obj( obj_geometry.objFile )
     mesh.initGL()
-    return mesh.instance()
+    is_selectable = selectable
+    return mesh.instance( selectable=is_selectable )
 
 class MeshVertex( object ):
     '''Definition of adjacency data for a mesh vertex. The interpretation

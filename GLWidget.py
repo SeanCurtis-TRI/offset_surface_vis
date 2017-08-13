@@ -29,14 +29,16 @@ class GLWidget( QtOpenGL.QGLWidget ):
         self.setFocusPolicy( QtCore.Qt.StrongFocus )
         self.setMouseTracking( True )
 
-    def addObjToScene( self, obj_filename ):
+    def addObjToScene( self, obj_filename, selectable=True ):
         '''Adds the given obj file to the scene.'''
-        self.scene.addNode( getMeshNode( obj_filename ) )
+        is_selectable = selectable
+        self.scene.addNode( getMeshNode( obj_filename, selectable=is_selectable ) )
         self._aimAtCenter()
 
     def addObjsToScene( self, obj_filenames ):
+        is_selectable = selectable
         for obj_filename in obj_filenames:
-            self.scene.addNode( getMeshNode( obj_filename ) )
+            self.scene.addNode( getMeshNode( obj_filename, selectable=is_selectable ) )
         self._aimAtCenter()
 
     def clear_nodes( self ):
