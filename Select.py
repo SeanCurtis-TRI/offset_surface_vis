@@ -142,7 +142,7 @@ def hitSet( buffer ):
     @param:     buffer      The selection buffer produced by OpenGL.
     @returns:   A set consisting of all the corresponding selectables.
     '''
-    return set( SELECTABLES[ record[2][0] ] for record in buffer ) #{ SELECTABLES[ record[2][0] ] for record in buffer }
+    return set( SELECTABLES[ record[2][0] ] for record in buffer if record[2][0] != 0)
     
 def closestHit( buffer ):
     '''Given the ids of the elements drawn in the selection buffer,
