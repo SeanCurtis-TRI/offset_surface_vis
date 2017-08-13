@@ -29,7 +29,148 @@ def distSqToSegment( p0, p1, q ):
         d_comp = d * ( dp / dLenSq )
         disp = q1 - d_comp
         return disp.lengthSq()
+
+# TODO: Creating the offset surface
+#   0. Create the following *persistent* data sets
+#       a. Fx3 array of face normals (one normal per face)
+#       b. Store Vx3 array of vertex positions
+#       c. Store Fx1 array of offsets
+#   1. In the original edge, visit each face
+#   2. Walk the vertices of the face.
+#       a. Find trios of faces adjacent to the vertex (always including the current face)
+#       b. For that vertex store:
+#           i. a slice object into the face normal array (i.e., [i, j, k] that I can use in normals[faces,:]
+#           ii. Compute A^inv based on the adjacent face normals.
+
+
+class OffsetSurface( object ):
+    '''Definition of an offset surface from a polygonal object'''
+    # Given the input mesh
+    #   A offset face has *at least* as many vertices as the input mesh
+    #   Strictly speaking, it has one vertex for each triple of intersecting planes
+    #   For a vertex with n adjacent faces, there are n choose 3 different vertex pairings.
+    #   
+    #   For example, if the input mesh has a vertex with 4 incident faces,
+    #       there are actually *four* coincident vertices -- one vertex for each triple
+    #       of planes. So, if we enumerate the four faces 0, 1, 2, 3, we get the following
+    #       triples ( 0, 1, 2 ), (0, 2, 3), (0, 1, 3), (1, 2, 3). Each produces a unique
+    #       vertex which, in this configuration all happen to be coincident.
+    #       The big question is, what are the definitions of these vertices and which
+    #       faces use them?
+    #       The position of the vertex will *always* be:
+    #           p + f(A_inv, delta), where
+    #               p is the original point on the rigid body
+    #               A_inv is the inverse of A (where A x = delta) A is a funciton of
+    #                   n_i, n_j, n_k -- the normals of the three intersecting planes
+    #               delta is a vector in R3 representing the non-negative offsets of the
+    #                   three intersecting planes.
+    #   Hypothesis:
+    #       I don't have to consider all n choose 3 combinations
+    #       I only have to consider sub-sequences of the adjacency list. So, if the
+    #           following faces are adjacent to vertex v (a, b, c, d, e, f), I don't
+    #           have 6 choose 3 = 20 combos, I only have 6. (abc, bcd, cde, etc.)
+    #           I believe this is correct due to
+    #               a) The *convexity* of the geometry
+    #               b) The fact that the planes are only moving outwards.
+    #       This should also imply the order of the vertices
+    #
+    #                a_________d
+    #              //
+    #            / /   0
+    #          / b/__________c
+    #        /   /|
+    #      / 1  / |    3
+    #    /     / 2|
+    #
+    #   In the image above vertex b has four adjacent faces. That means we have four vertices:
+    #       (0,1,2), (1,2,3), (2,3,0), (3,0,1) - denoted as b_0, b_1, b_2, b_3
+    #       face 0 orginally had vertices: a, b, c, d
+    #           Now it would have: a, b0, b2, b3, c, d
+    #
+    #   Everything above this is crap! It's still not right
+    #   While it's true, I can define the intersecting point of three planes as an offset
+    #       from the original vertex, the three plane's normals and the non-negative offset values,
+    #       it is *not* true that that resulting vertex will play any roll in the final
+    #       geometry.
+    #       Specifically, it may get clipped by another plane in the adjacency set.
+    #   It seems *highly* unlikely 
     
+    class Face:
+        def __init__( self ):
+            pass
+        
+    class Vertex:
+        '''A point defined by the intersection of three planes. It's final position is
+        defined as an offset from a base position. The offset is a function of the
+        three planes' normals and their non-negative offset values.'''
+        
+        def __init__( self, p_idx, n1_idx, n2_idx, n3_idx, mesh ):
+            '''Constructor.
+            @param  p_index     The index of the point from which this vertex derives.
+            @param  n1_idx      The normal of the first plane which defines this point.
+            @param  n2_idx      The normal of the second plane.
+            @param  n3_idx      The normal of the third plane.
+            @param  mesh        The mesh containing the normal and point position data.
+            '''
+            self.origin = mesh.vertices[:3, p_idx]
+            self.A_inv = self._computeAInv( n1_idx, n2_idx, n3_idx, mesh )
+            self.deltas = mesh.deltas[ (n1_idx, n2_idx, n3_idx) ]
+            self._updatePosition()
+
+        def _computeAInv( self, n1_idx, n2_idx, n3_idx, mesh ):
+            '''The offset x from the origin of this vertex is defined by: Ax = d.
+            d = [d_1, d_2, d_3] are the non-negative offset values for planes 1, 2, & 3,
+                respectively.
+            A is the matrix:
+               | 1    n_12    n_13 |
+               | n_12   1     n_23 |, where n_ij = np.dot( n_i, n_j )
+               | n_13  n_23     1  |
+            We're solving for x, the offset, so we need x = A^-1 d.
+            '''
+            n1 = mesh.normals[:, n1_idx]
+            n2 = mesh.normals[:, n2_idx]
+            n3 = mesh.normals[:, n3_idx]
+            n_12 = np.dot( n1, n2 )
+            n_13 = np.dot( n1, n3 )
+            n_23 = np.dot( n2, n3 )
+            A = np.array( ( (1, n_12, n_13),
+                            (n_12, 1, n_23),
+                            (n_13, n_23, 1) ), dtype=np.float )
+            return np.linalg.inv( A )
+
+        def _updatePosition( self ):
+            '''Updates the position of this vertex based on mesh's delta values.'''
+            self.pos = np.dot( self.A_inv, self.deltas )
+    
+                
+    
+    def __init__( self, mesh ):
+        '''Ctor.
+        Initialize the surface from a watertight mesh instance..
+        '''
+        self.mesh = mesh
+        self.deltas = np.zeros( mesh.face_count, dtype=np.float )
+
+    vertices = property( lambda self: self.mesh.vertex_pos )
+    normals = property( lambda self: self.mesh.face_normals )
+    
+        
+class OffsetManipulator( SelectContext ):
+    '''A manipulator for editing the offset surface.'''
+    def __init__( self ):
+        SelectContext.__init__( self )
+        self.object = None
+
+    def set_object( self, obj_node ):
+        '''Sets the underlying object that this manipulator operates on.'''
+        self.object = obj_node
+        # TODO: Generate offset-surface data.
+
+    def clear_object( self ):
+        '''Clears the underlying object'''
+        self.object = None
+        # TODO: Clear the offset-surface data.
+        
 class MoveManipulator( SelectContext ):
     '''A manipulator for moving objects in the scene.'''
     def __init__( self ):

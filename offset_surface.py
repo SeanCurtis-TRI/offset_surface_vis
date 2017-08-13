@@ -9,7 +9,7 @@ if ( sys.version_info[0] != 2 ):
 
 from PyQt4 import QtCore, QtGui
 ##from Context import SelectContext
-from manipulator import MoveManipulator
+from manipulator import OffsetManipulator
 from GLWidget import GLWidget
 from scene import Scene
 import mouse
@@ -25,7 +25,8 @@ class Window(QtGui.QMainWindow):
         mainFrame = QtGui.QFrame( self )
         
         self.scene = Scene()
-        self.scene.context = MoveManipulator()
+        self.manip = OffsetManipulator()
+        self.scene.context = self.manip
         self.glWidget = GLWidget( self.scene )
 
         mainLayout = QtGui.QVBoxLayout( mainFrame )
@@ -43,6 +44,7 @@ class Window(QtGui.QMainWindow):
 
     def clear( self ):
         self.glWidget.clear_nodes()
+        self.manip.clear_object()
         
     def spawnOpenFileDlg( self ):
         fileName = QtGui.QFileDialog.getOpenFileName( self, "Read OBJ file",
@@ -50,6 +52,7 @@ class Window(QtGui.QMainWindow):
         if ( fileName ):
             self.clear()
             self.glWidget.addObjToScene( fileName )
+            self.manip.set_object( self.scene.nodes[-1] )
             path, fName = os.path.split( str( fileName ) )
             self.last_dir = path
     
