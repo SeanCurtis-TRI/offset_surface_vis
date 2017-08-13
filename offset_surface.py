@@ -52,7 +52,7 @@ class Window(QtGui.QMainWindow):
         if ( fileName ):
             self.clear()
             self.glWidget.addObjToScene( fileName, selectable=False )
-            self.manip.set_object( self.scene.nodes[-1] )
+            self.manip.set_object( self.scene.nodes[-1].drawable )
             path, fName = os.path.split( str( fileName ) )
             self.last_dir = path
     

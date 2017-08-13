@@ -3,6 +3,7 @@ from Select import *
 from matrix import Vector3, Vector2
 from XFormMatrix import BaseXformMatrix
 from node import unionBB
+from OpenGL.GL import *
 from OpenGL.GLU import gluProject
 import numpy as np
 import mouse
@@ -149,27 +150,47 @@ class OffsetSurface( object ):
         Initialize the surface from a watertight mesh instance..
         '''
         self.mesh = mesh
-        self.deltas = np.zeros( mesh.face_count, dtype=np.float )
+        self.deltas = np.zeros( (mesh.face_count(),), dtype=np.float )
 
     vertices = property( lambda self: self.mesh.vertex_pos )
     normals = property( lambda self: self.mesh.face_normals )
-    
+
+    def drawGL( self ):
+        '''Simply draws the mesh to the viewer'''
+        pass
         
 class OffsetManipulator( SelectContext ):
     '''A manipulator for editing the offset surface.'''
     def __init__( self ):
         SelectContext.__init__( self )
-        self.object = None
+        self.mesh = None
 
-    def set_object( self, obj_node ):
+    def set_object( self, mesh_node ):
         '''Sets the underlying object that this manipulator operates on.'''
-        self.object = obj_node
+        self.mesh = OffsetSurface( mesh_node )
         # TODO: Generate offset-surface data.
 
     def clear_object( self ):
         '''Clears the underlying object'''
-        self.object = None
+        self.mesh = None
         # TODO: Clear the offset-surface data.
+
+    def draw3DGL( self, camControl, select=False ):
+        '''Draws the 3D UI elements to the view.
+
+        @param:     camControl      The scene's camera control
+        @param:     select          Indicator if this draw call is made for selection purposes
+        '''
+        if ( self.mesh ):
+            glPushAttrib( GL_ENABLE_BIT )
+            glColor3f(1.0, 1.0, 1.0)
+            glDisable( GL_LIGHTING )
+            glPushMatrix()
+            glPolygonMode( GL_FRONT_AND_BACK, GL_LINE )
+            self.mesh.mesh.glCommands()
+            glPolygonMode( GL_FRONT_AND_BACK, GL_FILL )
+            glPopMatrix()
+            glPopAttrib()
         
 class MoveManipulator( SelectContext ):
     '''A manipulator for moving objects in the scene.'''
