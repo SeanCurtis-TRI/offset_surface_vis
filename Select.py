@@ -162,7 +162,10 @@ def closestHit( buffer ):
             if ( testDist < closestDist ):
                 closest = hit[2][0]
     if ( closest > -1 ):
-        return SELECTABLES[ closest ]
+        if ( closest < len( SELECTABLES ) ):
+            return SELECTABLES[ closest ]
+        else:
+            return closest
     else:
         return None
     

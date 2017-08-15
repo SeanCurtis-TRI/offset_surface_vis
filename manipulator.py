@@ -97,11 +97,32 @@ class OffsetSurface( object ):
     #   It seems *highly* unlikely 
     
     class Face:
-        def __init__( self ):
-            self.id = 0
+        def __init__( self, id ):
+            self.id = id
             self.vertices = []
-        
+
+        def __str__( self ):
+            return 'F(%d) - %s' % ( self.id, self.vertices )
+
     class Vertex:
+        '''The transform for defining the position of a vertex from displacements and normals.'''
+        def __init__( self, p_idx, n1_idx, n2_idx, n3_idx, mesh, deltas ):
+            self.origin = mesh.vertex_pos[ :3, p_idx ]
+            self.A_inv = self._computeAInv( n1_idx, n2_idx, n3_idx, mesh )
+            self.deltas = deltas[ [n1_idx, n2_idx, n3_idx] ]
+            self._updatePosition()
+
+        def _computeAInv( self, n1_idx, n2_idx, n3_idx, mesh ):
+            n1 = mesh.face_normals[:, n1_idx ]
+            n2 = mesh.face_normals[:, n2_idx ]
+            n3 = mesh.face_normals[:, n3_idx ]
+            A = np.array( ( n1, n2, n3 ), dtype=np.float32 )
+            return np.linalg.inv( A )
+
+        def _updatePosition( self ):
+            self.pos = np.dot( self.A_inv, self.deltas ) + self.origin
+            
+    class VertexJunk:
         '''A point defined by the intersection of three planes. It's final position is
         defined as an offset from a base position. The offset is a function of the
         three planes' normals and their non-negative offset values.'''
@@ -150,17 +171,39 @@ class OffsetSurface( object ):
         '''Ctor.
         Initialize the surface from a watertight mesh instance..
         '''
+        self.mesh = mesh
+        self.deltas = np.zeros( (mesh.face_count(),), dtype=np.float ) + 0.2
+        
         self.faces = []
-        for mesh_face in mesh.faces:
-            f = self.Face()
+        for i, mesh_face in enumerate(mesh.faces):
+            f = self.Face(i)
             f.vertices.extend( mesh_face.vertices )
             self.faces.append( f )
-        self.mesh = mesh
-        self.deltas = np.zeros( (mesh.face_count(),), dtype=np.float )
+            
+        self.vertices = []
+        for i, mesh_vertex in enumerate( mesh.vertices ):
+            v = self.Vertex( i, mesh_vertex.faces[0], mesh_vertex.faces[1],
+                             mesh_vertex.faces[2], self.mesh, self.deltas )
+            self.vertices.append( v )
 
-    vertices = property( lambda self: self.mesh.vertex_pos )
     normals = property( lambda self: self.mesh.face_normals )
 
+    def set_offset( self, offset, face_index ):
+        '''Sets the offset value of one or all faces.
+        @param  offset      The offset value. Must be a float >= 0.0.
+        @param  face_index  If < 0, sets *all* faces, otherwise a valid index sets
+                            the single, indexed face.
+        '''
+        if ( offset < 0 ): offset = 0.0
+        if ( face_index < 0 ):
+            self.deltas[ : ] = offset
+            for v in self.vertices:
+                v._updatePosition()
+        else:
+            self.deltas[ face_index ] = offset
+            for v in self.faces[face_index].vertices:
+                self.vertices[v]._updatePosition()
+            
     def drawGL( self, hover_index, select ):
         '''Simply draws the mesh to the viewer'''
         class Highlighter:
@@ -171,14 +214,14 @@ class OffsetSurface( object ):
                 
             def face_setup( self, f ):
                 if ( self.select ):
-                    glLoadName( f.id )
+                    glLoadName( f.id + 1 )
                 elif ( f.id == self.hover_index ):
-                    glColor3f( 1.0, 1.0, 0.0 )
+                    glColor4f( 1.0, 1.0, 0.0, 0.25 )
                     self.colored = True
                 
             def face_finish( self ):
                 if ( self.colored ):
-                    glColor3f(1.0, 1.0, 1.0)
+                    glColor4f(1.0, 1.0, 1.0, 0.25)
                     self.colored = False
 
         highlighter = Highlighter( hover_index, select )
@@ -188,23 +231,23 @@ class OffsetSurface( object ):
             if (len( face.vertices ) == 3 ):
                 glBegin( GL_TRIANGLES )
                 glNormal3fv( self.normals[:, face.id] )
-                glVertex3fv( self.vertices[:3, face.vertices[0]] )
-                glVertex3fv( self.vertices[:3, face.vertices[1]] )
-                glVertex3fv( self.vertices[:3, face.vertices[2]] )
+                glVertex3fv( self.vertices[face.vertices[0]].pos )
+                glVertex3fv( self.vertices[face.vertices[1]].pos )
+                glVertex3fv( self.vertices[face.vertices[2]].pos )
                 glEnd()
             elif ( len( face.vertices ) == 4 ):
                 glBegin( GL_QUADS )
                 glNormal3fv( self.normals[:, face.id] )
-                glVertex3fv( self.vertices[:3, face.vertices[0]] )
-                glVertex3fv( self.vertices[:3, face.vertices[1]] )
-                glVertex3fv( self.vertices[:3, face.vertices[2]] )
-                glVertex3fv( self.vertices[:3, face.vertices[3]] )
+                glVertex3fv( self.vertices[face.vertices[0]].pos )
+                glVertex3fv( self.vertices[face.vertices[1]].pos )
+                glVertex3fv( self.vertices[face.vertices[2]].pos )
+                glVertex3fv( self.vertices[face.vertices[3]].pos )
                 glEnd()
             else:
                 glBegin( GL_POLYGON )
                 glNormal3fv( self.normals[:, face.id] )
                 for i in xrange( len( face.vertices ) ):
-                    glVertex3fv( self.vertices[:3, face.vertices[i]] )
+                    glVertex3fv( self.vertices[face.vertices[i]].pos )
                 glEnd()
             highlighter.face_finish()
 
@@ -212,17 +255,17 @@ class OffsetManipulator( SelectContext ):
     '''A manipulator for editing the offset surface.'''
     def __init__( self ):
         SelectContext.__init__( self )
-        self.mesh = None
+        self.offset_surface = None
 
     def set_object( self, mesh_node ):
         '''Sets the underlying object that this manipulator operates on.'''
-        self.mesh = OffsetSurface( mesh_node )
+        self.offset_surface = OffsetSurface( mesh_node )
 
         self.hover_index = -1
         
     def clear_object( self ):
         '''Clears the underlying object'''
-        self.mesh = None
+        self.offset_surface = None
         # TODO: Clear the offset-surface data.
 
     def draw3DGL( self, camControl, select=False ):
@@ -231,16 +274,47 @@ class OffsetManipulator( SelectContext ):
         @param:     camControl      The scene's camera control
         @param:     select          Indicator if this draw call is made for selection purposes
         '''
-        if ( self.mesh ):
-            glPushAttrib( GL_ENABLE_BIT )
-            glColor3f(1.0, 1.0, 1.0)
-            glDisable( GL_LIGHTING )
-            glPushMatrix()
-            glPolygonMode( GL_FRONT_AND_BACK, GL_LINE )
-            self.mesh.drawGL( self.hover_index, select )
-            glPolygonMode( GL_FRONT_AND_BACK, GL_FILL )
-            glPopMatrix()
+        if ( self.offset_surface ):
+            glPushAttrib( GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT )
+            glEnable(GL_COLOR_MATERIAL)
+            glColorMaterial(GL_FRONT, GL_DIFFUSE)
+            glColor4f( 1, 1, 1, 0.5 )
+            
+            if ( not select ):
+                glDisable(GL_BLEND)
+                glDisable(GL_LIGHTING)
+                glPolygonMode( GL_FRONT_AND_BACK, GL_LINE )
+                self.offset_surface.drawGL( self.hover_index, select )
+                glPolygonMode( GL_FRONT_AND_BACK, GL_FILL )
+                
+            glEnable( GL_BLEND )
+            glEnable(GL_LIGHTING)
+            glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA )
+            self.offset_surface.drawGL( self.hover_index, select )
             glPopAttrib()
+
+    def mouseMoveEvent( self, event, camControl, scene ):
+        '''Handle the mouse press event, returning an EventReport.
+
+        @param:     event       The event.
+        @param:     camControl  The scene's camera control for this event.
+        @param:     scene       The scene.
+        @returns:   An instance of EventReport.
+        '''
+        result = EventReport()
+        if ( self.offset_surface ):
+            hasCtrl, hasAlt, hasShift = getModState()
+            new_index = -1
+            if ( not (hasCtrl or hasAlt or hasShift ) ):
+                selected = self.selectSingle( None, camControl, (event.x(), event.y()) )
+                if ( len( selected ) ):
+                    new_index = selected.pop() - 1
+                else:
+                    new_index = -1
+            # TODO: Only require redraw if hover_index changed
+            result.set( True, new_index != self.hover_index, False )
+            self.hover_index = new_index
+        return result
         
 class MoveManipulator( SelectContext ):
     '''A manipulator for moving objects in the scene.'''

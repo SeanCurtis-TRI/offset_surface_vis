@@ -262,7 +262,6 @@ class SelectContext( Context ):
         @param:     pickSize        The size of the selection box around the selectPoint.
         @returns:   The selected object.
         '''
-        
         glPushAttrib( GL_ENABLE_BIT )
         glDisable( GL_LIGHTING )
         glDisable( GL_TEXTURE_2D )
@@ -277,14 +276,14 @@ class SelectContext( Context ):
 
 ##        Select.start()
 ##        self.drawUIGL( Select.SelectState.SELECT )
-##        newSelection = Select.end()
-        newSelection = None
+##        selected = Select.endSingle()
+        selected = None
 
-        if ( newSelection == None ):
-##            Select.start()
-##            self.draw3DGL( Select.SelectState.SELECT )
-##            newSelection = Select.end()
-            if ( newSelection == None ):
+        if ( selected is None ):
+            Select.start()
+            self.draw3DGL( camControl, Select.SelectState.SELECT )
+            selected = Select.endSingle()
+            if ( selected is None and scene is not None ):
                 Select.start()
                 scene.drawTreeGL( Select.SelectState.SELECT )
                 selected = Select.endSingle()
