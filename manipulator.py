@@ -108,9 +108,10 @@ class OffsetSurface( object ):
         '''The transform for defining the position of a vertex from displacements and normals.'''
         def __init__( self, p_idx, n1_idx, n2_idx, n3_idx, mesh, deltas ):
             self.origin = mesh.vertex_pos[ :3, p_idx ]
+            self.pos = self.origin.copy()
             self.A_inv = self._computeAInv( n1_idx, n2_idx, n3_idx, mesh )
-            self.deltas = deltas[ [n1_idx, n2_idx, n3_idx] ]
-            self._updatePosition()
+            self.deltas = [n1_idx, n2_idx, n3_idx]
+            self._updatePosition( deltas )
 
         def _computeAInv( self, n1_idx, n2_idx, n3_idx, mesh ):
             n1 = mesh.face_normals[:, n1_idx ]
@@ -119,8 +120,9 @@ class OffsetSurface( object ):
             A = np.array( ( n1, n2, n3 ), dtype=np.float32 )
             return np.linalg.inv( A )
 
-        def _updatePosition( self ):
-            self.pos = np.dot( self.A_inv, self.deltas ) + self.origin
+        def _updatePosition( self, deltas ):
+            my_deltas = deltas[ self.deltas ]
+            self.pos = np.dot( self.A_inv, my_deltas ) + self.origin
             
     class VertexJunk:
         '''A point defined by the intersection of three planes. It's final position is
@@ -165,8 +167,6 @@ class OffsetSurface( object ):
             '''Updates the position of this vertex based on mesh's delta values.'''
             self.pos = np.dot( self.A_inv, self.deltas )
     
-                
-    
     def __init__( self, mesh ):
         '''Ctor.
         Initialize the surface from a watertight mesh instance..
@@ -198,11 +198,11 @@ class OffsetSurface( object ):
         if ( face_index < 0 ):
             self.deltas[ : ] = offset
             for v in self.vertices:
-                v._updatePosition()
+                v._updatePosition( self.deltas )
         else:
             self.deltas[ face_index ] = offset
             for v in self.faces[face_index].vertices:
-                self.vertices[v]._updatePosition()
+                self.vertices[v]._updatePosition( self.deltas )
             
     def drawGL( self, hover_index, select ):
         '''Simply draws the mesh to the viewer'''
@@ -256,6 +256,10 @@ class OffsetManipulator( SelectContext ):
     def __init__( self ):
         SelectContext.__init__( self )
         self.offset_surface = None
+        self.dragging = False
+        self.mouseDown = None  # screen coords of mouse at button press
+        self.delta_cache = None
+        self.delta_value = None
 
     def set_object( self, mesh_node ):
         '''Sets the underlying object that this manipulator operates on.'''
@@ -293,6 +297,46 @@ class OffsetManipulator( SelectContext ):
             self.offset_surface.drawGL( self.hover_index, select )
             glPopAttrib()
 
+    def mousePressEvent( self, event, camControl, scene ):
+        '''Handle the mouse press event, returning an EventReport.
+
+        @param:     event       The event.
+        @param:     camControl  The scene's camera control for this event.
+        @param:     scene       The scene.
+        @returns:   An instance of EventReport.
+        '''
+        result = EventReport()
+        hasCtrl, hasAlt, hasShift = getModState()
+        btns = mouse.mouseButtons()
+        if (self.hover_index > -1 and btns == mouse.LEFT_BTN
+            and not hasAlt and not hasCtrl):
+            if (hasShift):
+                self.delta_cache = self.offset_surface.deltas.copy()
+            else:
+                self.delta_cache = np.array(
+                    [self.offset_surface.deltas[self.hover_index]],
+                    dtype=np.float)
+            self.delta_value = self.offset_surface.deltas[self.hover_index]
+            self.dragging = True
+            self.mouseDown = ( event.x(), event.y() )
+        return result
+
+    def mouseReleaseEvent( self, event, camControl, scene ):
+        '''Handle the mouse release event, returning an EventReport.
+
+        @param:     event       The event.
+        @param:     camControl  The scene's camera control for this event.
+        @param:     scene       The scene.
+        @returns:   An instance of EventReport.
+        '''
+        result = EventReport()
+        hasCtrl, hasAlt, hasShift = getModState()
+        btn = event.button()
+        if (self.dragging and btn == mouse.LEFT_BTN):
+            self.dragging = False
+            self.mouseDown = None
+        return result
+
     def mouseMoveEvent( self, event, camControl, scene ):
         '''Handle the mouse press event, returning an EventReport.
 
@@ -304,16 +348,31 @@ class OffsetManipulator( SelectContext ):
         result = EventReport()
         if ( self.offset_surface ):
             hasCtrl, hasAlt, hasShift = getModState()
-            new_index = -1
-            if ( not (hasCtrl or hasAlt or hasShift ) ):
-                selected = self.selectSingle( None, camControl, (event.x(), event.y()) )
+            if (self.dragging):
+                dx = event.x() - self.mouseDown[0]
+                # HORRIBLE MAGIC NUMBER!! I should really map this to screen
+                # space. In other words -- at the depth of the center of this
+                # face, what is the size of a pixel?
+                delta_delta = dx * 0.1
+                new_delta = self.delta_value + delta_delta
+                new_delta = np.clip( new_delta, 0, np.infty )
+                if ( not hasShift):
+                    self.offset_surface.set_offset(new_delta, self.hover_index)
+                else:
+                    self.offset_surface.set_offset(new_delta, -1)
+                result.set(True, True, False)
+            else:
+                new_index = -1
+                # if ( not (hasCtrl or hasAlt or hasShift ) ):
+                selected = self.selectSingle( None, camControl,
+                                              (event.x(), event.y()) )
                 if ( len( selected ) ):
                     new_index = selected.pop() - 1
                 else:
                     new_index = -1
-            # TODO: Only require redraw if hover_index changed
-            result.set( True, new_index != self.hover_index, False )
-            self.hover_index = new_index
+                # TODO: Only require redraw if hover_index changed
+                result.set( True, new_index != self.hover_index, False )
+                self.hover_index = new_index
         return result
         
 class MoveManipulator( SelectContext ):
