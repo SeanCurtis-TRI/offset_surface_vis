@@ -98,7 +98,8 @@ class OffsetSurface( object ):
     
     class Face:
         def __init__( self ):
-            pass
+            self.id = 0
+            self.vertices = []
         
     class Vertex:
         '''A point defined by the intersection of three planes. It's final position is
@@ -149,16 +150,64 @@ class OffsetSurface( object ):
         '''Ctor.
         Initialize the surface from a watertight mesh instance..
         '''
+        self.faces = []
+        for mesh_face in mesh.faces:
+            f = self.Face()
+            f.vertices.extend( mesh_face.vertices )
+            self.faces.append( f )
         self.mesh = mesh
         self.deltas = np.zeros( (mesh.face_count(),), dtype=np.float )
 
     vertices = property( lambda self: self.mesh.vertex_pos )
     normals = property( lambda self: self.mesh.face_normals )
 
-    def drawGL( self ):
+    def drawGL( self, hover_index, select ):
         '''Simply draws the mesh to the viewer'''
-        pass
-        
+        class Highlighter:
+            def __init__( self, hover_index, select ):
+                self.hover_index = hover_index
+                self.select = select
+                self.colored = False
+                
+            def face_setup( self, f ):
+                if ( self.select ):
+                    glLoadName( f.id )
+                elif ( f.id == self.hover_index ):
+                    glColor3f( 1.0, 1.0, 0.0 )
+                    self.colored = True
+                
+            def face_finish( self ):
+                if ( self.colored ):
+                    glColor3f(1.0, 1.0, 1.0)
+                    self.colored = False
+
+        highlighter = Highlighter( hover_index, select )
+
+        for face in self.faces:
+            highlighter.face_setup( face )
+            if (len( face.vertices ) == 3 ):
+                glBegin( GL_TRIANGLES )
+                glNormal3fv( self.normals[:, face.id] )
+                glVertex3fv( self.vertices[:3, face.vertices[0]] )
+                glVertex3fv( self.vertices[:3, face.vertices[1]] )
+                glVertex3fv( self.vertices[:3, face.vertices[2]] )
+                glEnd()
+            elif ( len( face.vertices ) == 4 ):
+                glBegin( GL_QUADS )
+                glNormal3fv( self.normals[:, face.id] )
+                glVertex3fv( self.vertices[:3, face.vertices[0]] )
+                glVertex3fv( self.vertices[:3, face.vertices[1]] )
+                glVertex3fv( self.vertices[:3, face.vertices[2]] )
+                glVertex3fv( self.vertices[:3, face.vertices[3]] )
+                glEnd()
+            else:
+                glBegin( GL_POLYGON )
+                glNormal3fv( self.normals[:, face.id] )
+                for i in xrange( len( face.vertices ) ):
+                    glVertex3fv( self.vertices[:3, face.vertices[i]] )
+                glEnd()
+            highlighter.face_finish()
+
 class OffsetManipulator( SelectContext ):
     '''A manipulator for editing the offset surface.'''
     def __init__( self ):
@@ -168,8 +217,9 @@ class OffsetManipulator( SelectContext ):
     def set_object( self, mesh_node ):
         '''Sets the underlying object that this manipulator operates on.'''
         self.mesh = OffsetSurface( mesh_node )
-        # TODO: Generate offset-surface data.
 
+        self.hover_index = -1
+        
     def clear_object( self ):
         '''Clears the underlying object'''
         self.mesh = None
@@ -187,7 +237,7 @@ class OffsetManipulator( SelectContext ):
             glDisable( GL_LIGHTING )
             glPushMatrix()
             glPolygonMode( GL_FRONT_AND_BACK, GL_LINE )
-            self.mesh.mesh.glCommands()
+            self.mesh.drawGL( self.hover_index, select )
             glPolygonMode( GL_FRONT_AND_BACK, GL_FILL )
             glPopMatrix()
             glPopAttrib()
