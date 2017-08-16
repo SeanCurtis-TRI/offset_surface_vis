@@ -39,6 +39,11 @@ class CameraControl:
         self.past = []
         self.future = []
 
+    def toggle_motion_widget( self, state ):
+        '''Toggles the display of the widget that *may* appear during view
+        manipulation.  Derived class should implement this as appropriate.'''
+        pass
+
     # OPERATIONS ON CAMERA PROPERTIES
     def setProjection( self, width, height ):
         '''Sets the view size for the projection matrix.
@@ -282,6 +287,14 @@ class OrbitCamControl( ZeroWorkCamControl ):
         # in order to know what the full keyboard state is, I need to know which
         #   keys are pressed
         self.pressed = set()
+        # controls whether the interactive widget is displayed during
+        # manipulation (True) or not (False).
+        self.show_widget = True
+
+    def toggle_motion_widget( self, state ):
+        '''Toggles the display of the widget that *may* appear during view
+        manipulation.  Derived class should implement this as appropriate.'''
+        self.show_widget = state
 
     def moveReady( self ):
         '''Examines the mouse state and determines if the keyboard modifiers are
@@ -300,7 +313,7 @@ class OrbitCamControl( ZeroWorkCamControl ):
 
     def drawGL( self ):
         '''Draws camera control functionality to the screen'''
-        if ( self.moving ):
+        if ( self.show_widget and self.moving ):
             if ( self.moving == self.TRANS ):
                 self.drawTrans()
             elif ( self.moving == self.ORBIT ):

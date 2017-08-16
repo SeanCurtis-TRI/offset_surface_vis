@@ -155,3 +155,7 @@ class GLWidget( QtOpenGL.QGLWidget ):
             result = self.scene.mouseMoveEvent( event, self.camControl )
         if ( result.needsRedraw or result.sceneUpdate ):
             self.updateGL()
+
+    def toggle_cam_control_widget_display( self, state ):
+        '''Toggles the display of the camera control's widget'''
+        self.camControl.toggle_motion_widget( state )

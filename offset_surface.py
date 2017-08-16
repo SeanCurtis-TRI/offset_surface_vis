@@ -40,11 +40,24 @@ class Window(QtGui.QMainWindow):
                                  triggered=self.clear, shortcut="Ctrl+x")
         fileMenu.addAction( open_obj )
         fileMenu.addAction( clear )
+
+        viewMenu = self.menuBar().addMenu( "View" )
+        toggle_cam_widget = QtGui.QAction("Show Camera Movement Widgets", self,
+                                          statusTip="Control whether manipulation icons appear while the view is being manipulated",
+                                          triggered=self.toggle_cam_widgets)
+        toggle_cam_widget.setCheckable(True)
+        toggle_cam_widget.setChecked(True)
+        viewMenu.addAction( toggle_cam_widget )
+
         self.setCentralWidget( mainFrame )
 
     def clear( self ):
         self.glWidget.clear_nodes()
         self.manip.clear_object()
+
+    def toggle_cam_widgets( self, state ):
+        '''Toggles the display of camera control widgets on the camera control'''
+        self.glWidget.toggle_cam_control_widget_display( state )
         
     def spawnOpenFileDlg( self ):
         fileName = QtGui.QFileDialog.getOpenFileName( self, "Read OBJ file",
