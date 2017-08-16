@@ -32,21 +32,53 @@ def distSqToSegment( p0, p1, q ):
         return disp.lengthSq()
 
 # TODO: Creating the offset surface
-#   0. Create the following *persistent* data sets
-#       a. Fx3 array of face normals (one normal per face)
-#       b. Store Vx3 array of vertex positions
-#       c. Store Fx1 array of offsets
-#   1. In the original edge, visit each face
-#   2. Walk the vertices of the face.
-#       a. Find trios of faces adjacent to the vertex (always including the current face)
-#       b. For that vertex store:
-#           i. a slice object into the face normal array (i.e., [i, j, k] that I can use in normals[faces,:]
-#           ii. Compute A^inv based on the adjacent face normals.
+#   1. For each vertex
+#       - the faces adjacent to that vertex (in counter-clockwise order) are: [f1, f2, ..., fN]
+#       - for each triple (f1, f2, f3), (f2, f3, f4), ..., (fN-2, fN-1, fN), (fN-1, fN, f1), (fN, f1, f2)
+#           create a vertex with the same origin and the normals as indicated
+#           - place it in the list of vertices -- its index is its index in that list.
+#           - enter it into a map where the key is the 3-tuple of face indices mapping to the index.
+#           ** There's a gotcha here. If I do this blindly with a vertex with three adjacent faces
+#               I get (f1, f2, f3), (f2, f3, f1), (f3, f1, f2) -- all the exact same planes
+#               there should be only one point.
+#               - simple solution is to key on # of adj faces and only do the loop of there
+#                   are multiple faces.
+#               - Alternative -- which might prevent future problems -- given a counter-clockwise
+#                   tuple (a, b, c), it would be equally validly identified as (b, c, a) or (c, a, b).
+#                   I need to create a canonical version so that as I determine three faces are
+#                   intersecting, I can *know* which vertex.
+#                   So, in this context, the counter-clockwise ness is irrelevant. It will be
+#                   100% uniquely defined by the membership and the order is irrelevant.
+#                   - so, make all keys sorted.
+#   2. For each face (with index f)
+#       define a clear vertex list
+#       for each incident vertex (v_i)
+#           Get the list of faces adjacent to v_i: [f_1, f_2, ..., f_n]
+#               f must be in the list. Re-order them so that f is f1
+#               For each triple: (f_1, f_2, f_3), (f_1, f_3, f_4), ..., (f_1, f_N-1, f_N)
+#                   look up the index keyed by those face indices and append it to the vertex list.
 
-
+# Second thoughts
+#   The previous approach seems to be a good, but incomplete start.
+#       It works just fine for the cube (no surprise)
+#       There are facets of the gem (in certain configurations) that seem quite promising.
+#       However, generally, it's crap.
+#   I already knew it was incomplete -- I needed to clip things, in some sense.
+#   IDEA:
+#       The original mesh's vertex sets at the intersection of *multiple* planes
+#       The new definition of the vertices is position based on set of deltas *and* a constraints
+#           the position is based on the three planes assigned to it.
+#           Constraints are the *other* planes.
+#           Essentially, after computing the position, I should clip it against the *remaining*
+#               planes.
+#           What does this clipping look like?
+#
+#   Secondary issue! I'm getting horrible numerical inaccuracy in my displacements
 class OffsetSurface( object ):
     '''Definition of an offset surface from a polygonal object'''
     # Given the input mesh
+    #   An offset face has *at least* as many vertices as the input mesh.
+
     #   A offset face has *at least* as many vertices as the input mesh
     #   Strictly speaking, it has one vertex for each triple of intersecting planes
     #   For a vertex with n adjacent faces, there are n choose 3 different vertex pairings.
@@ -106,8 +138,9 @@ class OffsetSurface( object ):
 
     class Vertex:
         '''The transform for defining the position of a vertex from displacements and normals.'''
-        def __init__( self, p_idx, n1_idx, n2_idx, n3_idx, mesh, deltas ):
-            self.origin = mesh.vertex_pos[ :3, p_idx ]
+        def __init__( self, p, n1_idx, n2_idx, n3_idx, mesh, deltas ):
+            print "New Vertex", p, n1_idx, n2_idx, n3_idx
+            self.origin = p.copy()
             self.pos = self.origin.copy()
             self.A_inv = self._computeAInv( n1_idx, n2_idx, n3_idx, mesh )
             self.deltas = [n1_idx, n2_idx, n3_idx]
@@ -123,68 +156,58 @@ class OffsetSurface( object ):
         def _updatePosition( self, deltas ):
             my_deltas = deltas[ self.deltas ]
             self.pos = np.dot( self.A_inv, my_deltas ) + self.origin
-            
-    class VertexJunk:
-        '''A point defined by the intersection of three planes. It's final position is
-        defined as an offset from a base position. The offset is a function of the
-        three planes' normals and their non-negative offset values.'''
-        
-        def __init__( self, p_idx, n1_idx, n2_idx, n3_idx, mesh ):
-            '''Constructor.
-            @param  p_index     The index of the point from which this vertex derives.
-            @param  n1_idx      The normal of the first plane which defines this point.
-            @param  n2_idx      The normal of the second plane.
-            @param  n3_idx      The normal of the third plane.
-            @param  mesh        The mesh containing the normal and point position data.
-            '''
-            self.origin = mesh.vertices[:3, p_idx]
-            self.A_inv = self._computeAInv( n1_idx, n2_idx, n3_idx, mesh )
-            self.deltas = mesh.deltas[ (n1_idx, n2_idx, n3_idx) ]
-            self._updatePosition()
-
-        def _computeAInv( self, n1_idx, n2_idx, n3_idx, mesh ):
-            '''The offset x from the origin of this vertex is defined by: Ax = d.
-            d = [d_1, d_2, d_3] are the non-negative offset values for planes 1, 2, & 3,
-                respectively.
-            A is the matrix:
-               | 1    n_12    n_13 |
-               | n_12   1     n_23 |, where n_ij = np.dot( n_i, n_j )
-               | n_13  n_23     1  |
-            We're solving for x, the offset, so we need x = A^-1 d.
-            '''
-            n1 = mesh.normals[:, n1_idx]
-            n2 = mesh.normals[:, n2_idx]
-            n3 = mesh.normals[:, n3_idx]
-            n_12 = np.dot( n1, n2 )
-            n_13 = np.dot( n1, n3 )
-            n_23 = np.dot( n2, n3 )
-            A = np.array( ( (1, n_12, n_13),
-                            (n_12, 1, n_23),
-                            (n_13, n_23, 1) ), dtype=np.float )
-            return np.linalg.inv( A )
-
-        def _updatePosition( self ):
-            '''Updates the position of this vertex based on mesh's delta values.'''
-            self.pos = np.dot( self.A_inv, self.deltas )
     
     def __init__( self, mesh ):
         '''Ctor.
         Initialize the surface from a watertight mesh instance..
         '''
         self.mesh = mesh
-        self.deltas = np.zeros( (mesh.face_count(),), dtype=np.float ) + 0.2
-        
-        self.faces = []
-        for i, mesh_face in enumerate(mesh.faces):
-            f = self.Face(i)
-            f.vertices.extend( mesh_face.vertices )
-            self.faces.append( f )
+        self.deltas = np.zeros( (mesh.face_count(),), dtype=np.float )
+
+        def make_key( i, j, k ):
+            '''Creates a sorted tuple of the three values.'''
+            values = [i, j, k]
+            values.sort()
+            return tuple( values )
             
-        self.vertices = []
+        self.vertices = []      # the set of all offset vertices
+        vertex_map = {}         # a map from (f_i, f_j, f_k) and the vertex at defined
+                                # by the intersection of those faces.
         for i, mesh_vertex in enumerate( mesh.vertices ):
-            v = self.Vertex( i, mesh_vertex.faces[0], mesh_vertex.faces[1],
-                             mesh_vertex.faces[2], self.mesh, self.deltas )
-            self.vertices.append( v )
+            print mesh_vertex
+            f_count = len( mesh_vertex.faces )
+            p = self.mesh.vertex_pos[:3, i]
+
+            assert( f_count > 2 )
+            for f in xrange(f_count):
+                f0 = mesh_vertex.faces[ f - 2 ]
+                f1 = mesh_vertex.faces[ f - 1 ]
+                f2 = mesh_vertex.faces[ f ]
+                v_idx = len( self.vertices )
+                v = self.Vertex( p, f0, f1, f2, self.mesh, self.deltas )
+                self.vertices.append( v )
+                key = make_key(f0, f1, f2)
+                assert( not vertex_map.has_key( key ) )
+                vertex_map[ key ] = v_idx
+                if (f_count == 3): break    # only the single vertex
+
+        self.faces = []
+        for f_idx, mesh_face in enumerate( mesh.faces ):
+            print f, mesh_face
+            face_vertices = []
+            for v_idx in mesh_face.vertices:
+                print "\tv:", v_idx
+                mesh_vertex = mesh.vertices[ v_idx ]
+                print "\t\t", mesh_vertex
+                found_idx = mesh_vertex.faces.index( f_idx )
+                source_verts = mesh_vertex.faces[found_idx:] + mesh_vertex.faces[:found_idx]
+                print "\t\tSource:", source_verts
+                for i in xrange(1, len(source_verts) - 1):
+                    key = make_key(f_idx, source_verts[i], source_verts[i + 1] )
+                    face_vertices.append( vertex_map[ key ] )
+            f = self.Face( f_idx )
+            f.vertices = face_vertices
+            self.faces.append( f )
 
     normals = property( lambda self: self.mesh.face_normals )
 
@@ -280,7 +303,6 @@ class OffsetManipulator( SelectContext ):
     def clear_object( self ):
         '''Clears the underlying object'''
         self.offset_surface = None
-        # TODO: Clear the offset-surface data.
 
     def draw3DGL( self, camControl, select=False ):
         '''Draws the 3D UI elements to the view.
