@@ -188,6 +188,16 @@ class OffsetSurface( object ):
 
     normals = property( lambda self: self.mesh.face_normals )
 
+    def get_face_centroid( self, face_index ):
+        '''Computes the centroid of the given face.'''
+        face = self.faces[ face_index ]
+        vert_count = len( face.vertices )
+        pos = self.vertices[ face.vertices[0] ].pos
+        for i in xrange(1, vert_count):
+            pos += self.vertices[ face.vertices[i] ].pos
+        pos /= vert_count
+        return pos
+            
     def set_offset( self, offset, face_index ):
         '''Sets the offset value of one or all faces.
         @param  offset      The offset value. Must be a float >= 0.0.
@@ -216,12 +226,12 @@ class OffsetSurface( object ):
                 if ( self.select ):
                     glLoadName( f.id + 1 )
                 elif ( f.id == self.hover_index ):
-                    glColor4f( 1.0, 1.0, 0.0, 0.25 )
+                    glColor4f( 1.0, 1.0, 0.0, 0.5 )
                     self.colored = True
                 
             def face_finish( self ):
                 if ( self.colored ):
-                    glColor4f(1.0, 1.0, 1.0, 0.25)
+                    glColor4f(1.0, 1.0, 1.0, 0.5)
                     self.colored = False
 
         highlighter = Highlighter( hover_index, select )
@@ -283,6 +293,7 @@ class OffsetManipulator( SelectContext ):
             glEnable(GL_COLOR_MATERIAL)
             glColorMaterial(GL_FRONT, GL_DIFFUSE)
             glColor4f( 1, 1, 1, 0.5 )
+            glLineWidth(2.0)
             
             if ( not select ):
                 glDisable(GL_BLEND)
@@ -310,6 +321,11 @@ class OffsetManipulator( SelectContext ):
         btns = mouse.mouseButtons()
         if (self.hover_index > -1 and btns == mouse.LEFT_BTN
             and not hasAlt and not hasCtrl):
+            face_midpoint = self.offset_surface.get_face_centroid( self.hover_index )
+            vec_end_point = face_midpoint + self.offset_surface.normals[:, self.hover_index]
+            self.transScale, self.manipAxis = self.measureVector( Vector3( array=face_midpoint ),
+                                                                  Vector3( array=vec_end_point ) )
+            self.transScale = 1.0 / self.transScale
             if (hasShift):
                 self.delta_cache = self.offset_surface.deltas.copy()
             else:
@@ -321,6 +337,19 @@ class OffsetManipulator( SelectContext ):
             self.mouseDown = ( event.x(), event.y() )
         return result
 
+    def measureVector( self, p0, p1 ):
+        '''Returns a 2-tuple (float, Vector2), which is the length and direction of the
+        vector pointing from p0 to p1 in screen space.'''
+        
+        projMat = glGetDoublev( GL_PROJECTION_MATRIX )
+        viewport = glGetIntegerv( GL_VIEWPORT )
+        modelMat = glGetDoublev( GL_MODELVIEW_MATRIX )
+        u0, v0, w0 = gluProject( p0[0], p0[1],p0[2], modelMat, projMat, viewport )
+        u1, v1, w1 = gluProject( p1[0], p1[1],p1[2], modelMat, projMat, viewport )
+        v = Vector2( u1 - u0, v1 - v0 )
+        length = v.length()
+        return length, v / length
+        
     def mouseReleaseEvent( self, event, camControl, scene ):
         '''Handle the mouse release event, returning an EventReport.
 
@@ -350,10 +379,11 @@ class OffsetManipulator( SelectContext ):
             hasCtrl, hasAlt, hasShift = getModState()
             if (self.dragging):
                 dx = event.x() - self.mouseDown[0]
+                dy = self.mouseDown[1] - event.y()
                 # HORRIBLE MAGIC NUMBER!! I should really map this to screen
                 # space. In other words -- at the depth of the center of this
                 # face, what is the size of a pixel?
-                delta_delta = dx * 0.1
+                delta_delta = (dx * self.manipAxis[0] + dy * self.manipAxis[1]) * self.transScale
                 new_delta = self.delta_value + delta_delta
                 new_delta = np.clip( new_delta, 0, np.infty )
                 if ( not hasShift):
@@ -533,7 +563,7 @@ class MoveManipulator( SelectContext ):
         return result
 
     def screenAxis( self, axis, camControl ):
-        '''Reports the magnitude of the given manipulator axis in screen space.
+        '''Reports the screen-space 2d vector of the given vector.
 
         @param:     axis        The axis to determine (x-, y-, or z-axis).
         @param:     camControl  The scene's camera control for this event.
