@@ -145,7 +145,7 @@ class OffsetSurface( object ):
     class Vertex:
         '''The transform for defining the position of a vertex from displacements and normals.'''
         def __init__( self, p, n1_idx, n2_idx, n3_idx, mesh, deltas ):
-            print "New Vertex", p, n1_idx, n2_idx, n3_idx
+#            print "New Vertex", p, n1_idx, n2_idx, n3_idx
             self.origin = p.copy()
             self.pos = self.origin.copy()
             self.A_inv = self._computeAInv( n1_idx, n2_idx, n3_idx, mesh )
@@ -180,7 +180,7 @@ class OffsetSurface( object ):
         vertex_map = {}         # a map from (f_i, f_j, f_k) and the vertex at defined
                                 # by the intersection of those faces.
         for i, mesh_vertex in enumerate( mesh.vertices ):
-            print mesh_vertex
+#            print mesh_vertex
             f_count = len( mesh_vertex.faces )
             p = self.mesh.vertex_pos[:3, i]
 
@@ -199,15 +199,15 @@ class OffsetSurface( object ):
 
         self.faces = []
         for f_idx, mesh_face in enumerate( mesh.faces ):
-            print f, mesh_face
+#            print f, mesh_face
             face_vertices = []
             for v_idx in mesh_face.vertices:
-                print "\tv:", v_idx
+#                print "\tv:", v_idx
                 mesh_vertex = mesh.vertices[ v_idx ]
-                print "\t\t", mesh_vertex
+#                print "\t\t", mesh_vertex
                 found_idx = mesh_vertex.faces.index( f_idx )
                 source_verts = mesh_vertex.faces[found_idx:] + mesh_vertex.faces[:found_idx]
-                print "\t\tSource:", source_verts
+#                print "\t\tSource:", source_verts
                 for i in xrange(1, len(source_verts) - 1):
                     key = make_key(f_idx, source_verts[i], source_verts[i + 1] )
                     face_vertices.append( vertex_map[ key ] )
