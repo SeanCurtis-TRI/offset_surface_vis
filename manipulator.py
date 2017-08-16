@@ -145,7 +145,6 @@ class OffsetSurface( object ):
     class Vertex:
         '''The transform for defining the position of a vertex from displacements and normals.'''
         def __init__( self, p, n1_idx, n2_idx, n3_idx, mesh, deltas ):
-#            print "New Vertex", p, n1_idx, n2_idx, n3_idx
             self.origin = p.copy()
             self.pos = self.origin.copy()
             self.A_inv = self._computeAInv( n1_idx, n2_idx, n3_idx, mesh )
@@ -156,7 +155,7 @@ class OffsetSurface( object ):
             n1 = mesh.face_normals[:, n1_idx ]
             n2 = mesh.face_normals[:, n2_idx ]
             n3 = mesh.face_normals[:, n3_idx ]
-            A = np.array( ( n1, n2, n3 ), dtype=np.float32 )
+            A = np.array( ( n1, n2, n3 ), dtype=np.float64 )
             return np.linalg.inv( A )
 
         def _updatePosition( self, deltas ):
