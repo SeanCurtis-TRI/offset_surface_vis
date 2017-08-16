@@ -601,7 +601,7 @@ class OrbitCamControl( ZeroWorkCamControl ):
                 self.cameraOrbit( -dx, dy )
                 result.needsRedraw = True
             elif ( self.moving == self.DOLLY ):
-                dy = self.downScreen[1] - event.y()
+                dy = event.y() - self.downScreen[1]
                 result.needsRedraw = self.cameraDolly( dy * 0.1 )   # TODO: Get rid of this magic number
         return result
 
