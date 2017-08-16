@@ -73,7 +73,13 @@ def distSqToSegment( p0, p1, q ):
 #               planes.
 #           What does this clipping look like?
 #
-#   Secondary issue! I'm getting horrible numerical inaccuracy in my displacements
+# Icosahedron
+#   I've got vertices with five adjacent faces [a, b, c, d, e]
+#       I'm producing vertices for: abc, bcd, cde, dea, eab
+#       However, for face a, I'm inserting indices for abc acd ade -- **acd** does not have a vertex
+#           I need to not do that vertex. Yes?  No?
+#       
+# Numerical Issue: I'm getting horrible numerical inaccuracy in my displacements
 class OffsetSurface( object ):
     '''Definition of an offset surface from a polygonal object'''
     # Given the input mesh
