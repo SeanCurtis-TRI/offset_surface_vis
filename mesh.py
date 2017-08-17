@@ -112,7 +112,7 @@ class MeshFace( object ):
         self.faces = []
 
     def __str__( self ):
-        return 'F(%s) - (%s)' % ( self.vertices, self.faces )
+        return 'F V(%s) - F_adj(%s)' % ( self.vertices, self.faces )
 
     def enforce_valid_order( self, mesh, index ):
         '''Given the mesh, confirms that the features are ordered correctly,
