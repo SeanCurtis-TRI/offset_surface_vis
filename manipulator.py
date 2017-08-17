@@ -167,6 +167,7 @@ class OffsetSurface( object ):
         Initialize the surface from a watertight mesh instance..
         '''
         self.mesh = mesh
+        self.analyze_mesh( mesh )
         self.deltas = np.zeros( (mesh.face_count(),), dtype=np.float )
 
         def make_key( i, j, k ):
@@ -215,6 +216,46 @@ class OffsetSurface( object ):
             self.faces.append( f )
 
     normals = property( lambda self: self.mesh.face_normals )
+
+    def analyze_mesh( self, mesh ):
+        '''Analyzes the mesh for various numerical properties'''
+        # create planes for all of the faces.
+        planes = np.empty( (4, mesh.face_count() ), dtype=np.float64 )
+        fit_planes = np.empty( (4, mesh.face_count() ), dtype=np.float64 )
+        def get_mesh_face_centroid( face, mesh ):
+            '''Computes the centroid of the face on the given mesh'''
+            positions = mesh.vertex_pos[ :3, face.vertices ]
+            return np.sum(positions, axis=1) / len( face.vertices )
+        
+        def least_squares_plane( face, mesh ):
+            '''Computes a plane for the face bsaed on a least-squares fit.'''
+            points = mesh.vertex_pos[ :, face.vertices ].T
+            zeros = np.ones( (points.shape[0], 1), dtype=np.float64 )
+            x, resid, rank, s = np.linalg.lstsq( points, zeros )
+            nLen = np.sqrt( np.dot( x[:3, 0], x[:3, 0] ) )
+            x = ( x - np.array( ((0, 0, 0, 1),), dtype=np.float64).T ) / nLen
+            return x[:, 0]
+
+        for f_idx, face in enumerate(mesh.faces):
+            centroid = get_mesh_face_centroid( face, mesh )
+            fit_planes[:, f_idx] = least_squares_plane( face, mesh )
+            normal = mesh.face_normals[:, f_idx]
+            d = -np.dot(normal, centroid)
+            planes[:3, f_idx] = normal
+            planes[3, f_idx] = d
+
+            dists = []
+            for v_idx in face.vertices:
+                dist = np.dot( planes[:, f_idx], mesh.vertex_pos[:, v_idx] )
+                fit_dist = np.dot( mesh.vertex_pos[:, v_idx], fit_planes[:, f_idx] )
+                dists.append( ( v_idx, dist, fit_dist ) )
+            idx_s = ''.join( ['{0:20}'.format(d[0]) for d in dists ] )
+            dist_s = ''.join( ['{0:20g}'.format(d[1]) for d in dists ] )
+            fit_dist_s = ''.join( ['{0:20g}'.format(d[2]) for d in dists ] )
+            print "\nFace: %d" % (f_idx)
+            print '\tid\t%s' % idx_s
+            print '\tdist\t%s' % dist_s
+            print '\tfit\t%s' % fit_dist_s
 
     def get_face_centroid( self, face_index ):
         '''Computes the centroid of the given face.'''
