@@ -224,7 +224,7 @@ class WatertightMesh( Geometry ):
         # initialize the vertex data.
         vert_count = len(obj_file.vertSet)
         self.vertex_pos = np.empty( ( 4, vert_count), dtype=np.float )
-        self.vertex_pos[:, 3] = 1.0
+        self.vertex_pos[3, :] = 1.0
         self.vertices = [MeshVertex() for x in xrange(vert_count)]
         for i, v in enumerate( obj_file.vertSet ):
             self.vertex_pos[:3, i] = v.data
