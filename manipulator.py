@@ -239,6 +239,7 @@ class OffsetSurface( object ):
         for f_idx, face in enumerate(mesh.faces):
             centroid = get_mesh_face_centroid( face, mesh )
             fit_planes[:, f_idx] = least_squares_plane( face, mesh )
+##            mesh.face_normals[:, f_idx] = fit_planes[:3, f_idx]
             normal = mesh.face_normals[:, f_idx]
             d = -np.dot(normal, centroid)
             planes[:3, f_idx] = normal
