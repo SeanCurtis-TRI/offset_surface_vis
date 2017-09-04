@@ -6,8 +6,16 @@ from node import unionBB
 from OpenGL.GL import *
 from OpenGL.GLU import gluProject
 import numpy as np
+from scipy.spatial import HalfspaceIntersection
 import mouse
 from numpy import pi, tan
+import sys
+
+# Creating local operations for creating the offset surface with arbitrary offsets from a
+# polytope is escaping me.
+# The fallback is to "simply" compute the convex hull of the intersection of the half spaces.
+#   A paper suggests how: https://pdfs.semanticscholar.org/f5ff/402776c5dee37b53471d067fa60872876a45.pdf
+#   It is might be possible to do this in an incremental way. 
 
 def distSqToSegment( p0, p1, q ):
     '''Determines the distance between q and the segment defined by p0 and p1.
@@ -31,6 +39,45 @@ def distSqToSegment( p0, p1, q ):
         disp = q1 - d_comp
         return disp.lengthSq()
 
+class SimpleMesh:
+    def __init__( self, vertices, faces, normals ):
+        '''Constructor
+        @param vertices An nx3 numpy array of vertex locations.
+        @param faces a list of lists of indexes -- indices into the faces in counter clockwise order.
+        @param normals: A 3XF array of normals (where there are F faces.
+        '''
+        self.vertices = vertices
+        self.faces = faces
+        self.normals = normals
+        self.drawn = False
+
+    def drawGL( self ):
+        for f_idx, face in enumerate( self.faces ):
+            if not face: continue
+            v_count = len(face)
+            if ( v_count == 3 ):
+                glBegin(GL_TRIANGLES)
+                glNormal3fv( self.normals[:, f_idx] )
+                glVertex3fv( self.vertices[ face[0], : ] )
+                glVertex3fv( self.vertices[ face[1], : ] )
+                glVertex3fv( self.vertices[ face[2], : ] )
+                glEnd()
+            elif ( v_count == 4 ):
+                glBegin(GL_QUADS)
+                glNormal3fv( self.normals[:, f_idx] )
+                glVertex3fv( self.vertices[ face[0], : ] )
+                glVertex3fv( self.vertices[ face[1], : ] )
+                glVertex3fv( self.vertices[ face[2], : ] )
+                glVertex3fv( self.vertices[ face[3], : ] )
+                glEnd()
+            else:
+                glBegin(GL_POLYGON)
+                glNormal3fv( self.normals[:, f_idx] )
+                for v_idx in face:
+                    glVertex3fv( self.vertices[ v_idx, : ] )
+                glEnd()
+        self.drawn = True
+                
 # TODO: Creating the offset surface
 #   1. For each vertex
 #       - the faces adjacent to that vertex (in counter-clockwise order) are: [f1, f2, ..., fN]
@@ -155,20 +202,29 @@ class OffsetSurface( object ):
             n1 = mesh.face_normals[:, n1_idx ]
             n2 = mesh.face_normals[:, n2_idx ]
             n3 = mesh.face_normals[:, n3_idx ]
-            A = np.array( ( n1, n2, n3 ), dtype=np.float64 )
-            return np.linalg.inv( A )
+            self.A = np.array( ( n1, n2, n3 ), dtype=np.float64 )
+            return np.linalg.inv( self.A )
 
         def _updatePosition( self, deltas ):
             my_deltas = deltas[ self.deltas ]
-            self.pos = np.dot( self.A_inv, my_deltas ) + self.origin
+            offset = np.dot( self.A_inv, my_deltas )
+            offset2 = np.linalg.solve( self.A, my_deltas )
+            diff = offset - offset2
+            diff_len = np.sqrt( np.dot( diff, diff ) )
+            if ( diff_len > 1e-8 ):
+                print "!"
+            self.pos = offset + self.origin
     
     def __init__( self, mesh ):
         '''Ctor.
         Initialize the surface from a watertight mesh instance..
         '''
         self.mesh = mesh
-        self.analyze_mesh( mesh )
+        self.hull = None
+##        self.analyze_mesh( mesh )
         self.deltas = np.zeros( (mesh.face_count(),), dtype=np.float )
+        self.planes = np.zeros( (mesh.face_count(), 4), dtype=np.float )
+        self.feasible_point = np.mean( mesh.vertex_pos, axis=1 )[:3]
 
         def make_key( i, j, k ):
             '''Creates a sorted tuple of the three values.'''
@@ -199,6 +255,9 @@ class OffsetSurface( object ):
 
         self.faces = []
         for f_idx, mesh_face in enumerate( mesh.faces ):
+            self.planes[f_idx, :3] = self.normals[:, f_idx].T
+            self.planes[f_idx, 3] = -np.dot(self.normals[:, f_idx],
+                                            self.vertices[ mesh_face.vertices[0] ].origin )
 #            print f, mesh_face
             face_vertices = []
             for v_idx in mesh_face.vertices:
@@ -283,9 +342,51 @@ class OffsetSurface( object ):
             self.deltas[ face_index ] = offset
             for v in self.faces[face_index].vertices:
                 self.vertices[v]._updatePosition( self.deltas )
-            
-    def drawGL( self, hover_index, select ):
-        '''Simply draws the mesh to the viewer'''
+        temp_planes = self.planes.copy()
+        temp_planes[:, 3] -= self.deltas
+
+        hs = HalfspaceIntersection( temp_planes, self.feasible_point )
+        # TODO: Take the vertices in self.hull.intersections and map them to faces
+        #   For each face,
+        #       find all the normals that *lie* on that face.
+        #       Order the faces in counter-clockwise order
+        #
+        verts = hs.intersections  # (N, 3) shape -- each row is a vertex
+        faces = [[] for f in self.faces]
+##        print "\nOffset"
+        for i, f in enumerate( self.faces ):
+##            print "\tFace", i
+            d = temp_planes[i, 3]   # the const for the ith plane
+            n = self.normals[:, i]  # The norm for the ith plane, (3,) shape
+            dist = np.dot(verts, n ) + d  # (N, 3) * (3,) -> (N,)
+            indices = np.where( np.abs( dist ) < 1e-6 )[ 0 ] # (M,) matrix
+            faces[i] = list(indices)
+            # Correct the winding
+            face_verts = verts[ faces[i], : ]  # (M, 3) matrix, vertex per row
+##            print face_verts
+            edges = face_verts[1:, :] - face_verts[:1, :]  # (M -1, 3) edges from v0-> vi, i in [1, M-1)
+##            print "\t\tedges\n", edges
+            len = np.sqrt( np.sum( edges * edges, axis=1 ) )
+            len.shape = (-1, 1)
+##            print "\t\tEdge lengths", len, len.shape
+            edges /= len
+##            print "\t\tEdge dir:", edges
+            cross_product = np.cross(edges, edges[:1, :])
+##            print "\t\tcp:", cross_product, cross_product.shape
+            n.shape = (3, 1)
+            dp = np.dot(cross_product, n)
+            dp.shape = (-1,)
+##            print "\t\tdp", dp, dp.shape
+            sorted = np.argsort(dp)
+##            print "\t\tsorted", sorted
+##            print "\t\t", faces[i]
+            faces[i] = [indices[0]] + [indices[j + 1] for j in sorted[::-1]]
+##            print "\t\t", faces[i]
+##        sys.exit(1)
+##        print faces
+        self.hull = SimpleMesh( verts, faces, self.normals )
+
+    def drawGL_approx( self, hover_index, select ):
         class Highlighter:
             def __init__( self, hover_index, select ):
                 self.hover_index = hover_index
@@ -331,6 +432,31 @@ class OffsetSurface( object ):
                 glEnd()
             highlighter.face_finish()
 
+    def drawGL_hull( self ):
+        if ( self.hull ):
+            self.hull.drawGL()
+    
+    def drawGL( self, hover_index, select ):
+        '''Simply draws the mesh to the viewer'''
+        if ( select ):
+            self.drawGL_approx( hover_index, select )
+        else:
+            # TODO: handle highlighting
+            self.drawGL_hull()
+            
+    def print_face_stats(self, index ):
+        '''Prints various statistics of the given face to the screen'''
+        return
+        print "Face:", index
+        face = self.faces[ index ]
+        for v in face.vertices:
+            print "\tV", v
+            vert = self.vertices[ v]
+            print '\t\tOrigin:', vert.origin
+            print "\t\tPos:   ", vert.pos
+            for i, idx in enumerate( vert.deltas ):
+                print "\t\tn%d" % i, idx, self.normals[ :, idx ].T, "delta:", self.deltas[ idx ], "cond:", np.linalg.cond(vert.A)
+    
 class OffsetManipulator( SelectContext ):
     '''A manipulator for editing the offset surface.'''
     def __init__( self ):
@@ -359,17 +485,19 @@ class OffsetManipulator( SelectContext ):
         '''
         if ( self.offset_surface ):
             glPushAttrib( GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT )
+            if ( not select ):
+                glDisable(GL_BLEND)
+                glDisable(GL_LIGHTING)
+                glDisable(GL_CULL_FACE)
+                glPolygonMode( GL_FRONT_AND_BACK, GL_LINE )
+                self.offset_surface.drawGL( self.hover_index, select )
+                glPolygonMode( GL_FRONT_AND_BACK, GL_FILL )
+                glEnable(GL_CULL_FACE)
+                
             glEnable(GL_COLOR_MATERIAL)
             glColorMaterial(GL_FRONT, GL_DIFFUSE)
             glColor4f( 1, 1, 1, 0.5 )
             glLineWidth(2.0)
-            
-            if ( not select ):
-                glDisable(GL_BLEND)
-                glDisable(GL_LIGHTING)
-                glPolygonMode( GL_FRONT_AND_BACK, GL_LINE )
-                self.offset_surface.drawGL( self.hover_index, select )
-                glPolygonMode( GL_FRONT_AND_BACK, GL_FILL )
                 
             glEnable( GL_BLEND )
             glEnable(GL_LIGHTING)
@@ -462,16 +590,20 @@ class OffsetManipulator( SelectContext ):
                 result.set(True, True, False)
             else:
                 new_index = -1
-                # if ( not (hasCtrl or hasAlt or hasShift ) ):
                 selected = self.selectSingle( None, camControl,
                                               (event.x(), event.y()) )
                 if ( len( selected ) ):
                     new_index = selected.pop() - 1
                 else:
                     new_index = -1
-                # TODO: Only require redraw if hover_index changed
-                result.set( True, new_index != self.hover_index, False )
-                self.hover_index = new_index
+                
+                redraw = False
+                if ( new_index != self.hover_index ):
+                    redraw = True
+                    self.hover_index = new_index
+                    if ( self.hover_index >= 0 ):
+                        self.offset_surface.print_face_stats( self.hover_index )
+                result.set( True, redraw, False )
         return result
         
 class MoveManipulator( SelectContext ):
