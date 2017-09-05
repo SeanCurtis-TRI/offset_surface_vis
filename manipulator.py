@@ -6,16 +6,62 @@ from node import unionBB
 from OpenGL.GL import *
 from OpenGL.GLU import gluProject
 import numpy as np
-from scipy.spatial import HalfspaceIntersection
+from scipy.spatial import HalfspaceIntersection, ConvexHull
 import mouse
 from numpy import pi, tan
 import sys
+import itertools
 
 # Creating local operations for creating the offset surface with arbitrary offsets from a
 # polytope is escaping me.
 # The fallback is to "simply" compute the convex hull of the intersection of the half spaces.
 #   A paper suggests how: https://pdfs.semanticscholar.org/f5ff/402776c5dee37b53471d067fa60872876a45.pdf
 #   It is might be possible to do this in an incremental way. 
+
+def basisFromZ(z_axis):
+    '''Creates an orthonormal basis from the z_axis.
+
+    @param z_axis   A numpy array of shape (3,). Assumed to be unit length.
+                    This will serve as the z-axis (third column) of the basis.
+    @returns A (3, 3) matrix.
+    '''
+    small_axis = np.argmin(np.abs(z_axis))
+    axes = [ [1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    perp_axis = np.array(axes[small_axis])
+    x_axis = np.cross(z_axis, perp_axis)
+    x_axis /= np.sqrt(np.sum(np.dot(x_axis, x_axis)))
+    y_axis = np.cross(z_axis, x_axis)
+    return np.column_stack((x_axis, y_axis, z_axis))
+
+def orderVertices(vert_idx, normal, vertex_data):
+    '''Given a list of vertex indices, a plane normal, and vertex data,
+    orders the indexed vertices in a counter-clockwise order.
+    Assumes that all:
+        1. indexed vertices are part of the convex hull.
+        2. The points are all lie on a plane perpendicular to the given
+            normal.
+
+    @param  vert_idx    A list of indices in the range [0, N)
+    @param  normal      An (3,) array of floats -- the normal to a plane.
+    @param  vertex-data A (N, 3) array of floats -- the vertex data. One per row.
+    @returns A list of indices, ordered in counter-clockwise direction (relative
+    to the provided normal.
+    '''
+    print "\t\torder vertices", vert_idx, normal
+    basis = basisFromZ(normal)
+    print '\t\t\tbasis', basis
+    face_verts = vertex_data[vert_idx, :]  # (M, 3) matrix, vertex per row
+    print '\t\t\tface verts', face_verts
+    origin = face_verts[:1, :]
+    print '\t\t\torigin', origin
+    local = face_verts - origin
+    print '\t\t\tlocal', local
+    on_plane = np.dot(local, basis[:, :2])
+    print '\t\t\ton plane', on_plane
+    hull = ConvexHull(on_plane)
+    print "ordered", hull.vertices
+    
+    return [vert_idx[i] for i in hull.vertices ]
 
 def distSqToSegment( p0, p1, q ):
     '''Determines the distance between q and the segment defined by p0 and p1.
@@ -39,6 +85,36 @@ def distSqToSegment( p0, p1, q ):
         disp = q1 - d_comp
         return disp.lengthSq()
 
+
+def validate_face( indices, vertices, normal ):
+    '''Confirms that the indices into the vertices form a planar face in a
+    counter-clockwise wrapping relative to the provided normal.
+    @param  indices     A list of integers in the range [0, N)
+    @param  vertices    An Nx3 numpy array of floats; each row is a vertex.
+    @param  normal      A numpy array of shape (3,); the face normal.
+    '''
+    n = normal.copy()
+    n.shape = (3, 1)
+
+    # test planarity
+    v = vertices[ indices, : ]   # an (M, 3) array with M vertices.
+    dists = np.dot(v, n)
+    if (np.abs(np.max(dists) - np.min(dists)) > 0.01 ):
+        raise ValueError, "Face is not planar: distances in range [%f, %f]" % ( np.min(dists), np.max(dists))
+
+    # test winding
+    vectors = v[1:, :] - v[:1 :]  # displacement from each vertex to the initial vertex
+    cross_product = np.cross(vectors[:1, :], vectors[1:, :])
+    dp = np.dot( cross_product, n )
+    if (not np.all(dp > 0)):
+        print indices
+        print v
+        print n
+        print vectors
+        print cross_product
+        print dp
+        raise ValueError, "Winding is bad!"
+    
 class SimpleMesh:
     def __init__( self, vertices, faces, normals ):
         '''Constructor
@@ -233,7 +309,7 @@ class OffsetSurface( object ):
             return tuple( values )
             
         self.vertices = []      # the set of all offset vertices
-        vertex_map = {}         # a map from (f_i, f_j, f_k) and the vertex at defined
+        vertex_map = {}         # a map from (f_i, f_j, f_k) and the vertex defined
                                 # by the intersection of those faces.
         for i, mesh_vertex in enumerate( mesh.vertices ):
 #            print mesh_vertex
@@ -241,10 +317,11 @@ class OffsetSurface( object ):
             p = self.mesh.vertex_pos[:3, i]
 
             assert( f_count > 2 )
-            for f in xrange(f_count):
-                f0 = mesh_vertex.faces[ f - 2 ]
-                f1 = mesh_vertex.faces[ f - 1 ]
-                f2 = mesh_vertex.faces[ f ]
+            # all combinations
+            for i0, i1, i2 in itertools.combinations(xrange(f_count), 3):
+                f0 = mesh_vertex.faces[ i0 ]
+                f1 = mesh_vertex.faces[ i1 ]
+                f2 = mesh_vertex.faces[ i2 ]
                 v_idx = len( self.vertices )
                 v = self.Vertex( p, f0, f1, f2, self.mesh, self.deltas )
                 self.vertices.append( v )
@@ -252,6 +329,17 @@ class OffsetSurface( object ):
                 assert( not vertex_map.has_key( key ) )
                 vertex_map[ key ] = v_idx
                 if (f_count == 3): break    # only the single vertex
+##            for f in xrange(f_count):
+##                f0 = mesh_vertex.faces[ f - 2 ]
+##                f1 = mesh_vertex.faces[ f - 1 ]
+##                f2 = mesh_vertex.faces[ f ]
+##                v_idx = len( self.vertices )
+##                v = self.Vertex( p, f0, f1, f2, self.mesh, self.deltas )
+##                self.vertices.append( v )
+##                key = make_key(f0, f1, f2)
+##                assert( not vertex_map.has_key( key ) )
+##                vertex_map[ key ] = v_idx
+##                if (f_count == 3): break    # only the single vertex
 
         self.faces = []
         for f_idx, mesh_face in enumerate( mesh.faces ):
@@ -345,7 +433,19 @@ class OffsetSurface( object ):
         temp_planes = self.planes.copy()
         temp_planes[:, 3] -= self.deltas
 
+##        print
+        print "Mesh vertices", self.mesh.vertex_pos[:3, :].T
+##        print "Planes:", temp_planes
+##        print "Feasible point:", self.feasible_point
         hs = HalfspaceIntersection( temp_planes, self.feasible_point )
+        print "Half space"
+        print "half spaces", hs.halfspaces
+        print "interior_point", hs.interior_point
+        print "intersections", hs.intersections
+        print "dual points", hs.dual_points
+        print "dual facets", hs.dual_facets
+        print "dual_vertices", hs.dual_vertices
+        print "dual_equations", hs.dual_equations
         # TODO: Take the vertices in self.hull.intersections and map them to faces
         #   For each face,
         #       find all the normals that *lie* on that face.
@@ -355,33 +455,49 @@ class OffsetSurface( object ):
         faces = [[] for f in self.faces]
 ##        print "\nOffset"
         for i, f in enumerate( self.faces ):
-##            print "\tFace", i
+##            if i == 3: print "\n\tFace", i
             d = temp_planes[i, 3]   # the const for the ith plane
             n = self.normals[:, i]  # The norm for the ith plane, (3,) shape
             dist = np.dot(verts, n ) + d  # (N, 3) * (3,) -> (N,)
             indices = np.where( np.abs( dist ) < 1e-6 )[ 0 ] # (M,) matrix
-            faces[i] = list(indices)
-            # Correct the winding
-            face_verts = verts[ faces[i], : ]  # (M, 3) matrix, vertex per row
-##            print face_verts
-            edges = face_verts[1:, :] - face_verts[:1, :]  # (M -1, 3) edges from v0-> vi, i in [1, M-1)
-##            print "\t\tedges\n", edges
-            len = np.sqrt( np.sum( edges * edges, axis=1 ) )
-            len.shape = (-1, 1)
-##            print "\t\tEdge lengths", len, len.shape
-            edges /= len
-##            print "\t\tEdge dir:", edges
-            cross_product = np.cross(edges, edges[:1, :])
-##            print "\t\tcp:", cross_product, cross_product.shape
-            n.shape = (3, 1)
-            dp = np.dot(cross_product, n)
-            dp.shape = (-1,)
-##            print "\t\tdp", dp, dp.shape
-            sorted = np.argsort(dp)
-##            print "\t\tsorted", sorted
-##            print "\t\t", faces[i]
-            faces[i] = [indices[0]] + [indices[j + 1] for j in sorted[::-1]]
-##            print "\t\t", faces[i]
+            if (True):
+                print "\tFace:", i
+                faces[i] = orderVertices(list(indices), n, verts)
+            else:
+                faces[i] = list(indices)
+                if i == 3: print faces[i]
+                # Correct the winding
+                face_verts = verts[ faces[i], : ]  # (M, 3) matrix, vertex per row
+                if i == 3: print face_verts
+                edges = face_verts[1:, :] - face_verts[:1, :]  # (M -1, 3) edges from v0-> vi, i in [1, M-1)
+                if i == 3: print "\t\tedges\n", edges
+                len = np.sqrt( np.sum( edges * edges, axis=1 ) )
+                len.shape = (-1, 1)
+                if i == 3: print "\t\tEdge lengths", len, len.shape
+                edges /= len
+                if i == 3: print "\t\tEdge dir:", edges
+                cross_product = np.cross(edges, edges[:1, :])
+                if i == 3: print "\t\tcp:", cross_product, cross_product.shape
+                n.shape = (3, 1)
+                dp = np.dot(cross_product, n)
+                dp.shape = (-1,)
+                if i == 3: print "\t\tdp", dp, dp.shape
+                # !! This ordering fails because the angle pi - epsilon and pi + epsilon has the same value.
+                #   So, pi + delta - epsilon should happen *after pi - delta + epsilon
+                #   But because of the difference in error, the order is reversed.
+                # I need a different test to sort basis to order them.
+                sorted = np.argsort(dp)
+                if i == 3: print "\t\tsorted", sorted
+                faces[i] = [indices[0]] + [indices[j + 1] for j in sorted[::-1]]
+                if i == 3: print "\t\t", faces[i]
+                try:
+                    if i == 3: print "testing"
+                    validate_face( faces[i], verts, n )
+                except ValueError as e:
+                    print e
+                    print "\tFace %d" % i
+                
+                print "\t\t", faces[i]
 ##        sys.exit(1)
 ##        print faces
         self.hull = SimpleMesh( verts, faces, self.normals )
@@ -470,8 +586,9 @@ class OffsetManipulator( SelectContext ):
     def set_object( self, mesh_node ):
         '''Sets the underlying object that this manipulator operates on.'''
         self.offset_surface = OffsetSurface( mesh_node )
-
+    
         self.hover_index = -1
+        self.offset_surface.set_offset(0.0, -1)
         
     def clear_object( self ):
         '''Clears the underlying object'''
