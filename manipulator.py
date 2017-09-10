@@ -12,12 +12,6 @@ from numpy import pi, tan
 import sys
 import itertools
 
-# Creating local operations for creating the offset surface with arbitrary offsets from a
-# polytope is escaping me.
-# The fallback is to "simply" compute the convex hull of the intersection of the half spaces.
-#   A paper suggests how: https://pdfs.semanticscholar.org/f5ff/402776c5dee37b53471d067fa60872876a45.pdf
-#   It is might be possible to do this in an incremental way. 
-
 def basisFromZ(z_axis):
     '''Creates an orthonormal basis from the z_axis.
 
@@ -78,34 +72,6 @@ def distSqToSegment( p0, p1, q ):
         return disp.lengthSq()
 
 
-def validate_face( indices, vertices, normal ):
-    '''Confirms that the indices into the vertices form a planar face in a
-    counter-clockwise wrapping relative to the provided normal.
-    @param  indices     A list of integers in the range [0, N)
-    @param  vertices    An Nx3 numpy array of floats; each row is a vertex.
-    @param  normal      A numpy array of shape (3,); the face normal.
-    '''
-    n = normal.copy()
-    n.shape = (3, 1)
-
-    # test planarity
-    v = vertices[ indices, : ]   # an (M, 3) array with M vertices.
-    dists = np.dot(v, n)
-    if (np.abs(np.max(dists) - np.min(dists)) > 0.01 ):
-        raise ValueError, "Face is not planar: distances in range [%f, %f]" % ( np.min(dists), np.max(dists))
-
-    # test winding
-    vectors = v[1:, :] - v[:1 :]  # displacement from each vertex to the initial vertex
-    cross_product = np.cross(vectors[:1, :], vectors[1:, :])
-    dp = np.dot( cross_product, n )
-    if (not np.all(dp > 0)):
-        print indices
-        print v
-        print n
-        print vectors
-        print cross_product
-        print dp
-        raise ValueError, "Winding is bad!"
     
 class SimpleMesh:
     def __init__( self, vertices, faces, normals ):
@@ -117,7 +83,6 @@ class SimpleMesh:
         self.vertices = vertices
         self.faces = faces
         self.normals = normals
-        self.drawn = False
 
     def drawGL( self ):
         for f_idx, face in enumerate( self.faces ):
@@ -144,8 +109,6 @@ class SimpleMesh:
                 for v_idx in face:
                     glVertex3fv( self.vertices[ v_idx, : ] )
                 glEnd()
-        self.drawn = True
-                
 
 class OffsetSurface( object ):
     '''Definition of an offset surface from a polygonal object'''
@@ -164,19 +127,14 @@ class OffsetSurface( object ):
         '''
         self.mesh = mesh
         self.hull = None
-##        self.analyze_mesh( mesh )
         self.deltas = np.zeros( (mesh.face_count(),), dtype=np.float )
         self.planes = np.zeros( (mesh.face_count(), 4), dtype=np.float )
         self.feasible_point = np.mean( mesh.vertex_pos, axis=1 )[:3]
 
-        def make_key( i, j, k ):
-            '''Creates a sorted tuple of the three values.'''
-            values = [i, j, k]
-            values.sort()
-            return tuple( values )
-
         self.vertices = self.mesh.vertex_pos[:3, :].T
 
+        # this is necessary to get an index *back* from a face for OpenGL
+        # selection.
         self.faces = []
         for f_idx, mesh_face in enumerate( mesh.faces ):
             self.planes[f_idx, :3] = self.normals[:, f_idx].T
@@ -191,51 +149,13 @@ class OffsetSurface( object ):
 
     normals = property( lambda self: self.mesh.face_normals )
 
-    def analyze_mesh( self, mesh ):
-        '''Analyzes the mesh for various numerical properties'''
-        # create planes for all of the faces.
-        planes = np.empty( (4, mesh.face_count() ), dtype=np.float64 )
-        fit_planes = np.empty( (4, mesh.face_count() ), dtype=np.float64 )
-        def get_mesh_face_centroid( face, mesh ):
-            '''Computes the centroid of the face on the given mesh'''
-            positions = mesh.vertex_pos[ :3, face.vertices ]
-            return np.sum(positions, axis=1) / len( face.vertices )
-        
-        def least_squares_plane( face, mesh ):
-            '''Computes a plane for the face bsaed on a least-squares fit.'''
-            points = mesh.vertex_pos[ :, face.vertices ].T
-            zeros = np.ones( (points.shape[0], 1), dtype=np.float64 )
-            x, resid, rank, s = np.linalg.lstsq( points, zeros )
-            nLen = np.sqrt( np.dot( x[:3, 0], x[:3, 0] ) )
-            x = ( x - np.array( ((0, 0, 0, 1),), dtype=np.float64).T ) / nLen
-            return x[:, 0]
-
-        for f_idx, face in enumerate(mesh.faces):
-            centroid = get_mesh_face_centroid( face, mesh )
-            fit_planes[:, f_idx] = least_squares_plane( face, mesh )
-##            mesh.face_normals[:, f_idx] = fit_planes[:3, f_idx]
-            normal = mesh.face_normals[:, f_idx]
-            d = -np.dot(normal, centroid)
-            planes[:3, f_idx] = normal
-            planes[3, f_idx] = d
-
-            dists = []
-            for v_idx in face.vertices:
-                dist = np.dot( planes[:, f_idx], mesh.vertex_pos[:, v_idx] )
-                fit_dist = np.dot( mesh.vertex_pos[:, v_idx], fit_planes[:, f_idx] )
-                dists.append( ( v_idx, dist, fit_dist ) )
-            idx_s = ''.join( ['{0:20}'.format(d[0]) for d in dists ] )
-            dist_s = ''.join( ['{0:20g}'.format(d[1]) for d in dists ] )
-            fit_dist_s = ''.join( ['{0:20g}'.format(d[2]) for d in dists ] )
-            print "\nFace: %d" % (f_idx)
-            print '\tid\t%s' % idx_s
-            print '\tdist\t%s' % dist_s
-            print '\tfit\t%s' % fit_dist_s
-
-    def get_face_centroid( self, face_index ):
+    def get_face_centroid( self, face_index, with_offset=False ):
         '''Computes the centroid of the given face.'''
         face = self.faces[ face_index ]
-        pos = np.mean(self.vertices[face.vertices, :], axis=0)
+        offset = np.zeros_like(self.normals[:, face_index])
+        if (with_offset):
+            offset = self.normals[:, face_index] * self.deltas[face_index]
+        pos = np.mean(self.vertices[face.vertices, :] + offset, axis=0)
         return pos
             
     def set_offset( self, offset, face_index ):
@@ -269,74 +189,61 @@ class OffsetSurface( object ):
                 faces.append([])
         self.hull = SimpleMesh( verts, faces, self.normals )
 
-    def drawGL_approx( self, hover_index, select ):
-        class Highlighter:
-            def __init__( self, hover_index, select ):
-                self.hover_index = hover_index
-                self.select = select
-                self.colored = False
-                
-            def face_setup( self, f ):
-                if ( self.select ):
-                    glLoadName( f.id + 1 )
-                elif ( f.id == self.hover_index ):
-                    glColor4f( 1.0, 1.0, 0.0, 0.5 )
-                    self.colored = True
-                
-            def face_finish( self ):
-                if ( self.colored ):
-                    glColor4f(1.0, 1.0, 1.0, 0.5)
-                    self.colored = False
-
-        highlighter = Highlighter( hover_index, select )
-
+    def draw_offset_face( self, face_index ):
+        face = self.faces[ face_index ]
+        offset = self.normals[:, face_index] * self.deltas[face_index]
+        if (len( face.vertices ) == 3 ):
+            glBegin( GL_TRIANGLES )
+            glNormal3fv( self.normals[:, face.id] )
+            glVertex3fv( self.vertices[face.vertices[0]] + offset )
+            glVertex3fv( self.vertices[face.vertices[1]] + offset )
+            glVertex3fv( self.vertices[face.vertices[2]] + offset )
+            glEnd()
+        elif ( len( face.vertices ) == 4 ):
+            glBegin( GL_QUADS )
+            glNormal3fv( self.normals[:, face.id] )
+            glVertex3fv( self.vertices[face.vertices[0]] + offset )
+            glVertex3fv( self.vertices[face.vertices[1]] + offset )
+            glVertex3fv( self.vertices[face.vertices[2]] + offset )
+            glVertex3fv( self.vertices[face.vertices[3]] + offset )
+            glEnd()
+        else:
+            glBegin( GL_POLYGON )
+            glNormal3fv( self.normals[:, face.id] )
+            for i in xrange( len( face.vertices ) ):
+                glVertex3fv( self.vertices[face.vertices[i]] + offset )
+            glEnd()
+            
+    def draw_normal( self, hover_index ):
+        if ( hover_index > -1 ):
+            base = self.get_face_centroid(hover_index)
+            n = self.normals[:, hover_index]
+            base += n * self.deltas[ hover_index ]
+            glPushAttrib(GL_COLOR_BUFFER_BIT | GL_LINE_BIT)
+            glColor3f(1.0, 1.0, 0.0)
+            glLineWidth(2.0)
+            glBegin( GL_LINES )
+            glVertex3fv(base)
+            glVertex3fv(base + n )
+            glEnd()
+            glColor4f(1.0, 1.0, 0.0, 0.5)
+            self.draw_offset_face(hover_index)
+            glPopAttrib()
+            
+    def select_face( self ):
+        '''Renders the base polygon in a way to get face selection.'''
         for f, face in enumerate(self.faces):
-            offset = self.normals[:, f] * self.deltas[f]
-            highlighter.face_setup( face )
-            if (len( face.vertices ) == 3 ):
-                glBegin( GL_TRIANGLES )
-                glNormal3fv( self.normals[:, face.id] )
-                glVertex3fv( self.vertices[face.vertices[0]] + offset )
-                glVertex3fv( self.vertices[face.vertices[1]] + offset )
-                glVertex3fv( self.vertices[face.vertices[2]] + offset )
-                glEnd()
-            elif ( len( face.vertices ) == 4 ):
-                glBegin( GL_QUADS )
-                glNormal3fv( self.normals[:, face.id] )
-                glVertex3fv( self.vertices[face.vertices[0]] + offset )
-                glVertex3fv( self.vertices[face.vertices[1]] + offset )
-                glVertex3fv( self.vertices[face.vertices[2]] + offset )
-                glVertex3fv( self.vertices[face.vertices[3]] + offset )
-                glEnd()
-            else:
-                glBegin( GL_POLYGON )
-                glNormal3fv( self.normals[:, face.id] )
-                for i in xrange( len( face.vertices ) ):
-                    glVertex3fv( self.vertices[face.vertices[i]] + offset )
-                glEnd()
-            highlighter.face_finish()
-
-    def drawGL_hull( self ):
-        if ( self.hull ):
-            self.hull.drawGL()
+            glLoadName( face.id + 1 )
+            self.draw_offset_face( f )
     
     def drawGL( self, hover_index, select ):
         '''Simply draws the mesh to the viewer'''
-        if ( not select ):
-            self.drawGL_hull()
-        self.drawGL_approx( hover_index, select )
-            
-    def print_face_stats(self, index ):
-        '''Prints various statistics of the given face to the screen'''
-        return
-        print "Face:", index
-        face = self.faces[ index ]
-        for v in face.vertices:
-            print "\tV", v
-            vert = self.vertices[v]
-            print "\t\tPos:   ", vert.pos
-            for i, idx in enumerate( vert.deltas ):
-                print "\t\tn%d" % i, idx, self.normals[ :, idx ].T, "delta:", self.deltas[ idx ], "cond:", np.linalg.cond(vert.A)
+        if ( select ):
+            self.select_face()
+        else:
+            if ( self.hull ):
+                self.hull.drawGL()
+            self.draw_normal( hover_index )
     
 class OffsetManipulator( SelectContext ):
     '''A manipulator for editing the offset surface.'''
@@ -483,8 +390,6 @@ class OffsetManipulator( SelectContext ):
                 if ( new_index != self.hover_index ):
                     redraw = True
                     self.hover_index = new_index
-                    if ( self.hover_index >= 0 ):
-                        self.offset_surface.print_face_stats( self.hover_index )
                 result.set( True, redraw, False )
         return result
         
