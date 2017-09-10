@@ -267,29 +267,8 @@ class OffsetSurface( object ):
 
     class Vertex:
         '''The transform for defining the position of a vertex from displacements and normals.'''
-        def __init__( self, p, n1_idx, n2_idx, n3_idx, mesh, deltas ):
-            self.origin = p.copy()
-            self.pos = self.origin.copy()
-            self.A_inv = self._computeAInv( n1_idx, n2_idx, n3_idx, mesh )
-            self.deltas = [n1_idx, n2_idx, n3_idx]
-            self._updatePosition( deltas )
-
-        def _computeAInv( self, n1_idx, n2_idx, n3_idx, mesh ):
-            n1 = mesh.face_normals[:, n1_idx ]
-            n2 = mesh.face_normals[:, n2_idx ]
-            n3 = mesh.face_normals[:, n3_idx ]
-            self.A = np.array( ( n1, n2, n3 ), dtype=np.float64 )
-            return np.linalg.inv( self.A )
-
-        def _updatePosition( self, deltas ):
-            my_deltas = deltas[ self.deltas ]
-            offset = np.dot( self.A_inv, my_deltas )
-            offset2 = np.linalg.solve( self.A, my_deltas )
-            diff = offset - offset2
-            diff_len = np.sqrt( np.dot( diff, diff ) )
-            if ( diff_len > 1e-8 ):
-                print "!"
-            self.pos = offset + self.origin
+        def __init__( self, p):
+            self.pos = p.copy()
     
     def __init__( self, mesh ):
         '''Ctor.
@@ -307,59 +286,23 @@ class OffsetSurface( object ):
             values = [i, j, k]
             values.sort()
             return tuple( values )
-            
-        self.vertices = []      # the set of all offset vertices
-        vertex_map = {}         # a map from (f_i, f_j, f_k) and the vertex defined
-                                # by the intersection of those faces.
-        for i, mesh_vertex in enumerate( mesh.vertices ):
-#            print mesh_vertex
-            f_count = len( mesh_vertex.faces )
-            p = self.mesh.vertex_pos[:3, i]
 
-            assert( f_count > 2 )
-            # all combinations
-            for i0, i1, i2 in itertools.combinations(xrange(f_count), 3):
-                f0 = mesh_vertex.faces[ i0 ]
-                f1 = mesh_vertex.faces[ i1 ]
-                f2 = mesh_vertex.faces[ i2 ]
-                v_idx = len( self.vertices )
-                v = self.Vertex( p, f0, f1, f2, self.mesh, self.deltas )
-                self.vertices.append( v )
-                key = make_key(f0, f1, f2)
-                assert( not vertex_map.has_key( key ) )
-                vertex_map[ key ] = v_idx
-                if (f_count == 3): break    # only the single vertex
-##            for f in xrange(f_count):
-##                f0 = mesh_vertex.faces[ f - 2 ]
-##                f1 = mesh_vertex.faces[ f - 1 ]
-##                f2 = mesh_vertex.faces[ f ]
-##                v_idx = len( self.vertices )
-##                v = self.Vertex( p, f0, f1, f2, self.mesh, self.deltas )
-##                self.vertices.append( v )
-##                key = make_key(f0, f1, f2)
-##                assert( not vertex_map.has_key( key ) )
-##                vertex_map[ key ] = v_idx
-##                if (f_count == 3): break    # only the single vertex
+        self.vertices = []
+        for i, mesh_vertex in enumerate( mesh.vertices ):
+            p = self.mesh.vertex_pos[:3, i]
+            v = self.Vertex(p)
+            self.vertices.append( v )
 
         self.faces = []
         for f_idx, mesh_face in enumerate( mesh.faces ):
             self.planes[f_idx, :3] = self.normals[:, f_idx].T
-            self.planes[f_idx, 3] = -np.dot(self.normals[:, f_idx],
-                                            self.vertices[ mesh_face.vertices[0] ].origin )
-#            print f, mesh_face
+            point = self.vertices[ mesh_face.vertices[0] ].pos
+            d = -np.dot(self.normals[:, f_idx], point)
+            self.planes[f_idx, 3] = d
+            
             face_vertices = []
-            for v_idx in mesh_face.vertices:
-#                print "\tv:", v_idx
-                mesh_vertex = mesh.vertices[ v_idx ]
-#                print "\t\t", mesh_vertex
-                found_idx = mesh_vertex.faces.index( f_idx )
-                source_verts = mesh_vertex.faces[found_idx:] + mesh_vertex.faces[:found_idx]
-#                print "\t\tSource:", source_verts
-                for i in xrange(1, len(source_verts) - 1):
-                    key = make_key(f_idx, source_verts[i], source_verts[i + 1] )
-                    face_vertices.append( vertex_map[ key ] )
             f = self.Face( f_idx )
-            f.vertices = face_vertices
+            f.vertices = mesh_face.vertices
             self.faces.append( f )
 
     normals = property( lambda self: self.mesh.face_normals )
@@ -424,17 +367,19 @@ class OffsetSurface( object ):
         if ( offset < 0 ): offset = 0.0
         if ( face_index < 0 ):
             self.deltas[ : ] = offset
-            for v in self.vertices:
-                v._updatePosition( self.deltas )
+##            for v in self.vertices:
+##                v._updatePosition( self.deltas )
         else:
             self.deltas[ face_index ] = offset
-            for v in self.faces[face_index].vertices:
-                self.vertices[v]._updatePosition( self.deltas )
+##            for v in self.faces[face_index].vertices:
+##                self.vertices[v]._updatePosition( self.deltas )
         temp_planes = self.planes.copy()
         temp_planes[:, 3] -= self.deltas
 
 ##        print
         print "Mesh vertices", self.mesh.vertex_pos[:3, :].T
+        print "self.planes:", self.planes
+        print "temp planes", temp_planes
 ##        print "Planes:", temp_planes
 ##        print "Feasible point:", self.feasible_point
         hs = HalfspaceIntersection( temp_planes, self.feasible_point )
@@ -452,6 +397,10 @@ class OffsetSurface( object ):
         #       Order the faces in counter-clockwise order
         #
         verts = hs.intersections  # (N, 3) shape -- each row is a vertex
+        # TODO: Due to numerical imprecision, I can end up with vertices in verts that are
+        # *almost* the same (and *should* be the same. I should go through and merge them.
+        # Implications:
+        #   
         faces = [[] for f in self.faces]
 ##        print "\nOffset"
         for i, f in enumerate( self.faces ):
@@ -461,7 +410,9 @@ class OffsetSurface( object ):
             dist = np.dot(verts, n ) + d  # (N, 3) * (3,) -> (N,)
             indices = np.where( np.abs( dist ) < 1e-6 )[ 0 ] # (M,) matrix
             if (True):
-                print "\tFace:", i
+                print "\tFace:", i, indices
+                # TODO: The number of indices *may* be zero if the original plane has been
+                # rendered redundant.
                 faces[i] = orderVertices(list(indices), n, verts)
             else:
                 faces[i] = list(indices)
@@ -523,28 +474,29 @@ class OffsetSurface( object ):
 
         highlighter = Highlighter( hover_index, select )
 
-        for face in self.faces:
+        for f, face in enumerate(self.faces):
+            offset = self.normals[:, f] * self.deltas[f]
             highlighter.face_setup( face )
             if (len( face.vertices ) == 3 ):
                 glBegin( GL_TRIANGLES )
                 glNormal3fv( self.normals[:, face.id] )
-                glVertex3fv( self.vertices[face.vertices[0]].pos )
-                glVertex3fv( self.vertices[face.vertices[1]].pos )
-                glVertex3fv( self.vertices[face.vertices[2]].pos )
+                glVertex3fv( self.vertices[face.vertices[0]].pos + offset )
+                glVertex3fv( self.vertices[face.vertices[1]].pos + offset )
+                glVertex3fv( self.vertices[face.vertices[2]].pos + offset )
                 glEnd()
             elif ( len( face.vertices ) == 4 ):
                 glBegin( GL_QUADS )
                 glNormal3fv( self.normals[:, face.id] )
-                glVertex3fv( self.vertices[face.vertices[0]].pos )
-                glVertex3fv( self.vertices[face.vertices[1]].pos )
-                glVertex3fv( self.vertices[face.vertices[2]].pos )
-                glVertex3fv( self.vertices[face.vertices[3]].pos )
+                glVertex3fv( self.vertices[face.vertices[0]].pos + offset )
+                glVertex3fv( self.vertices[face.vertices[1]].pos + offset )
+                glVertex3fv( self.vertices[face.vertices[2]].pos + offset )
+                glVertex3fv( self.vertices[face.vertices[3]].pos + offset )
                 glEnd()
             else:
                 glBegin( GL_POLYGON )
                 glNormal3fv( self.normals[:, face.id] )
                 for i in xrange( len( face.vertices ) ):
-                    glVertex3fv( self.vertices[face.vertices[i]].pos )
+                    glVertex3fv( self.vertices[face.vertices[i]].pos + offset )
                 glEnd()
             highlighter.face_finish()
 
@@ -559,6 +511,7 @@ class OffsetSurface( object ):
         else:
             # TODO: handle highlighting
             self.drawGL_hull()
+            self.drawGL_approx( hover_index, select )
             
     def print_face_stats(self, index ):
         '''Prints various statistics of the given face to the screen'''
@@ -567,8 +520,7 @@ class OffsetSurface( object ):
         face = self.faces[ index ]
         for v in face.vertices:
             print "\tV", v
-            vert = self.vertices[ v]
-            print '\t\tOrigin:', vert.origin
+            vert = self.vertices[v]
             print "\t\tPos:   ", vert.pos
             for i, idx in enumerate( vert.deltas ):
                 print "\t\tn%d" % i, idx, self.normals[ :, idx ].T, "delta:", self.deltas[ idx ], "cond:", np.linalg.cond(vert.A)
