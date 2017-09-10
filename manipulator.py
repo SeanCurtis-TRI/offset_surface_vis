@@ -264,11 +264,6 @@ class OffsetSurface( object ):
 
         def __str__( self ):
             return 'F(%d) - %s' % ( self.id, self.vertices )
-
-    class Vertex:
-        '''The transform for defining the position of a vertex from displacements and normals.'''
-        def __init__( self, p):
-            self.pos = p.copy()
     
     def __init__( self, mesh ):
         '''Ctor.
@@ -287,16 +282,12 @@ class OffsetSurface( object ):
             values.sort()
             return tuple( values )
 
-        self.vertices = []
-        for i, mesh_vertex in enumerate( mesh.vertices ):
-            p = self.mesh.vertex_pos[:3, i]
-            v = self.Vertex(p)
-            self.vertices.append( v )
+        self.vertices = self.mesh.vertex_pos[:3, :].T
 
         self.faces = []
         for f_idx, mesh_face in enumerate( mesh.faces ):
             self.planes[f_idx, :3] = self.normals[:, f_idx].T
-            point = self.vertices[ mesh_face.vertices[0] ].pos
+            point = self.vertices[ mesh_face.vertices[0] ]
             d = -np.dot(self.normals[:, f_idx], point)
             self.planes[f_idx, 3] = d
             
@@ -352,9 +343,9 @@ class OffsetSurface( object ):
         '''Computes the centroid of the given face.'''
         face = self.faces[ face_index ]
         vert_count = len( face.vertices )
-        pos = self.vertices[ face.vertices[0] ].pos
+        pos = self.vertices[ face.vertices[0] ]
         for i in xrange(1, vert_count):
-            pos += self.vertices[ face.vertices[i] ].pos
+            pos += self.vertices[ face.vertices[i] ]
         pos /= vert_count
         return pos
             
@@ -367,12 +358,8 @@ class OffsetSurface( object ):
         if ( offset < 0 ): offset = 0.0
         if ( face_index < 0 ):
             self.deltas[ : ] = offset
-##            for v in self.vertices:
-##                v._updatePosition( self.deltas )
         else:
             self.deltas[ face_index ] = offset
-##            for v in self.faces[face_index].vertices:
-##                self.vertices[v]._updatePosition( self.deltas )
         temp_planes = self.planes.copy()
         temp_planes[:, 3] -= self.deltas
 
@@ -480,23 +467,23 @@ class OffsetSurface( object ):
             if (len( face.vertices ) == 3 ):
                 glBegin( GL_TRIANGLES )
                 glNormal3fv( self.normals[:, face.id] )
-                glVertex3fv( self.vertices[face.vertices[0]].pos + offset )
-                glVertex3fv( self.vertices[face.vertices[1]].pos + offset )
-                glVertex3fv( self.vertices[face.vertices[2]].pos + offset )
+                glVertex3fv( self.vertices[face.vertices[0]] + offset )
+                glVertex3fv( self.vertices[face.vertices[1]] + offset )
+                glVertex3fv( self.vertices[face.vertices[2]] + offset )
                 glEnd()
             elif ( len( face.vertices ) == 4 ):
                 glBegin( GL_QUADS )
                 glNormal3fv( self.normals[:, face.id] )
-                glVertex3fv( self.vertices[face.vertices[0]].pos + offset )
-                glVertex3fv( self.vertices[face.vertices[1]].pos + offset )
-                glVertex3fv( self.vertices[face.vertices[2]].pos + offset )
-                glVertex3fv( self.vertices[face.vertices[3]].pos + offset )
+                glVertex3fv( self.vertices[face.vertices[0]] + offset )
+                glVertex3fv( self.vertices[face.vertices[1]] + offset )
+                glVertex3fv( self.vertices[face.vertices[2]] + offset )
+                glVertex3fv( self.vertices[face.vertices[3]] + offset )
                 glEnd()
             else:
                 glBegin( GL_POLYGON )
                 glNormal3fv( self.normals[:, face.id] )
                 for i in xrange( len( face.vertices ) ):
-                    glVertex3fv( self.vertices[face.vertices[i]].pos + offset )
+                    glVertex3fv( self.vertices[face.vertices[i]] + offset )
                 glEnd()
             highlighter.face_finish()
 
