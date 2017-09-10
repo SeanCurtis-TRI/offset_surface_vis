@@ -243,11 +243,7 @@ class OffsetSurface( object ):
     def get_face_centroid( self, face_index ):
         '''Computes the centroid of the given face.'''
         face = self.faces[ face_index ]
-        vert_count = len( face.vertices )
-        pos = self.vertices[ face.vertices[0] ]
-        for i in xrange(1, vert_count):
-            pos += self.vertices[ face.vertices[i] ]
-        pos /= vert_count
+        pos = np.mean(self.vertices[face.vertices, :], axis=0)
         return pos
             
     def set_offset( self, offset, face_index ):
@@ -289,8 +285,7 @@ class OffsetSurface( object ):
         # *almost* the same (and *should* be the same. I should go through and merge them.
         # Implications:
         #   
-        faces = [[] for f in self.faces]
-##        print "\nOffset"
+        faces = []
         for i, f in enumerate( self.faces ):
 ##            if i == 3: print "\n\tFace", i
             d = temp_planes[i, 3]   # the const for the ith plane
@@ -298,10 +293,9 @@ class OffsetSurface( object ):
             dist = np.dot(verts, n ) + d  # (N, 3) * (3,) -> (N,)
             indices = np.where( np.abs( dist ) < 1e-6 )[ 0 ] # (M,) matrix
             if (True):
-                print "\tFace:", i, indices
-                # TODO: The number of indices *may* be zero if the original plane has been
-                # rendered redundant.
-                faces[i] = orderVertices(list(indices), n, verts)
+##                print "\tFace:", i, indices
+                if (list(indices)):
+                    faces.append( orderVertices(list(indices), n, verts) )
             else:
                 faces[i] = list(indices)
                 if i == 3: print faces[i]
@@ -394,12 +388,9 @@ class OffsetSurface( object ):
     
     def drawGL( self, hover_index, select ):
         '''Simply draws the mesh to the viewer'''
-        if ( select ):
-            self.drawGL_approx( hover_index, select )
-        else:
-            # TODO: handle highlighting
+        if ( not select ):
             self.drawGL_hull()
-            self.drawGL_approx( hover_index, select )
+        self.drawGL_approx( hover_index, select )
             
     def print_face_stats(self, index ):
         '''Prints various statistics of the given face to the screen'''
