@@ -47,20 +47,12 @@ def orderVertices(vert_idx, normal, vertex_data):
     @returns A list of indices, ordered in counter-clockwise direction (relative
     to the provided normal.
     '''
-    print "\t\torder vertices", vert_idx, normal
     basis = basisFromZ(normal)
-    print '\t\t\tbasis', basis
     face_verts = vertex_data[vert_idx, :]  # (M, 3) matrix, vertex per row
-    print '\t\t\tface verts', face_verts
     origin = face_verts[:1, :]
-    print '\t\t\torigin', origin
     local = face_verts - origin
-    print '\t\t\tlocal', local
     on_plane = np.dot(local, basis[:, :2])
-    print '\t\t\ton plane', on_plane
     hull = ConvexHull(on_plane)
-    print "ordered", hull.vertices
-    
     return [vert_idx[i] for i in hull.vertices ]
 
 def distSqToSegment( p0, p1, q ):
@@ -259,27 +251,7 @@ class OffsetSurface( object ):
             self.deltas[ face_index ] = offset
         temp_planes = self.planes.copy()
         temp_planes[:, 3] -= self.deltas
-
-##        print
-        print "Mesh vertices", self.mesh.vertex_pos[:3, :].T
-        print "self.planes:", self.planes
-        print "temp planes", temp_planes
-##        print "Planes:", temp_planes
-##        print "Feasible point:", self.feasible_point
         hs = HalfspaceIntersection( temp_planes, self.feasible_point )
-        print "Half space"
-        print "half spaces", hs.halfspaces
-        print "interior_point", hs.interior_point
-        print "intersections", hs.intersections
-        print "dual points", hs.dual_points
-        print "dual facets", hs.dual_facets
-        print "dual_vertices", hs.dual_vertices
-        print "dual_equations", hs.dual_equations
-        # TODO: Take the vertices in self.hull.intersections and map them to faces
-        #   For each face,
-        #       find all the normals that *lie* on that face.
-        #       Order the faces in counter-clockwise order
-        #
         verts = hs.intersections  # (N, 3) shape -- each row is a vertex
         # TODO: Due to numerical imprecision, I can end up with vertices in verts that are
         # *almost* the same (and *should* be the same. I should go through and merge them.
@@ -287,52 +259,14 @@ class OffsetSurface( object ):
         #   
         faces = []
         for i, f in enumerate( self.faces ):
-##            if i == 3: print "\n\tFace", i
             d = temp_planes[i, 3]   # the const for the ith plane
             n = self.normals[:, i]  # The norm for the ith plane, (3,) shape
             dist = np.dot(verts, n ) + d  # (N, 3) * (3,) -> (N,)
             indices = np.where( np.abs( dist ) < 1e-6 )[ 0 ] # (M,) matrix
-            if (True):
-##                print "\tFace:", i, indices
-                if (list(indices)):
-                    faces.append( orderVertices(list(indices), n, verts) )
+            if (list(indices)):
+                faces.append( orderVertices(list(indices), n, verts) )
             else:
-                faces[i] = list(indices)
-                if i == 3: print faces[i]
-                # Correct the winding
-                face_verts = verts[ faces[i], : ]  # (M, 3) matrix, vertex per row
-                if i == 3: print face_verts
-                edges = face_verts[1:, :] - face_verts[:1, :]  # (M -1, 3) edges from v0-> vi, i in [1, M-1)
-                if i == 3: print "\t\tedges\n", edges
-                len = np.sqrt( np.sum( edges * edges, axis=1 ) )
-                len.shape = (-1, 1)
-                if i == 3: print "\t\tEdge lengths", len, len.shape
-                edges /= len
-                if i == 3: print "\t\tEdge dir:", edges
-                cross_product = np.cross(edges, edges[:1, :])
-                if i == 3: print "\t\tcp:", cross_product, cross_product.shape
-                n.shape = (3, 1)
-                dp = np.dot(cross_product, n)
-                dp.shape = (-1,)
-                if i == 3: print "\t\tdp", dp, dp.shape
-                # !! This ordering fails because the angle pi - epsilon and pi + epsilon has the same value.
-                #   So, pi + delta - epsilon should happen *after pi - delta + epsilon
-                #   But because of the difference in error, the order is reversed.
-                # I need a different test to sort basis to order them.
-                sorted = np.argsort(dp)
-                if i == 3: print "\t\tsorted", sorted
-                faces[i] = [indices[0]] + [indices[j + 1] for j in sorted[::-1]]
-                if i == 3: print "\t\t", faces[i]
-                try:
-                    if i == 3: print "testing"
-                    validate_face( faces[i], verts, n )
-                except ValueError as e:
-                    print e
-                    print "\tFace %d" % i
-                
-                print "\t\t", faces[i]
-##        sys.exit(1)
-##        print faces
+                faces.append([])
         self.hull = SimpleMesh( verts, faces, self.normals )
 
     def drawGL_approx( self, hover_index, select ):
